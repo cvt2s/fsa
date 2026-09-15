@@ -1,0 +1,1754 @@
+local TweenService      = game:GetService("TweenService")
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local Lighting          = game:GetService("Lighting")
+local UIS               = game:GetService("UserInputService")
+local TeleportService   = game:GetService("TeleportService")
+local TextChatService   = game:GetService("TextChatService")
+local LP                = Players.LocalPlayer
+
+local LoaderGui = Instance.new("ScreenGui")
+LoaderGui.Name            = "ScriptLoader"
+LoaderGui.IgnoreGuiInset  = true
+LoaderGui.DisplayOrder    = 999
+LoaderGui.ResetOnSpawn    = false
+LoaderGui.Parent          = LP.PlayerGui
+
+local BG = Instance.new("Frame")
+BG.Size             = UDim2.new(0, 320, 0, 130)
+BG.Position         = UDim2.new(0.5, -160, 0.5, -65)
+BG.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+BG.BorderSizePixel  = 0
+BG.Parent           = LoaderGui
+Instance.new("UICorner", BG).CornerRadius = UDim.new(0, 10)
+
+local LoadTitle = Instance.new("TextLabel")
+LoadTitle.Size               = UDim2.new(1, -20, 0, 36)
+LoadTitle.Position           = UDim2.new(0, 10, 0, 10)
+LoadTitle.BackgroundTransparency = 1
+LoadTitle.Text               = "My Script"
+LoadTitle.TextColor3         = Color3.fromRGB(255, 255, 255)
+LoadTitle.TextSize           = 20
+LoadTitle.Font               = Enum.Font.GothamBold
+LoadTitle.TextXAlignment     = Enum.TextXAlignment.Left
+LoadTitle.Parent             = BG
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size               = UDim2.new(1, -20, 0, 20)
+StatusLabel.Position           = UDim2.new(0, 10, 0, 50)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text               = "Loading..."
+StatusLabel.TextColor3         = Color3.fromRGB(160, 160, 180)
+StatusLabel.TextSize           = 13
+StatusLabel.Font               = Enum.Font.Gotham
+StatusLabel.TextXAlignment     = Enum.TextXAlignment.Left
+StatusLabel.Parent             = BG
+
+local BarBG = Instance.new("Frame")
+BarBG.Size             = UDim2.new(1, -20, 0, 3)
+BarBG.Position         = UDim2.new(0, 10, 0, 82)
+BarBG.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+BarBG.BorderSizePixel  = 0
+BarBG.Parent           = BG
+Instance.new("UICorner", BarBG).CornerRadius = UDim.new(1, 0)
+
+local BarFill = Instance.new("Frame")
+BarFill.Size             = UDim2.new(0, 0, 1, 0)
+BarFill.BackgroundColor3 = Color3.fromRGB(130, 90, 230)
+BarFill.BorderSizePixel  = 0
+BarFill.Parent           = BarBG
+Instance.new("UICorner", BarFill).CornerRadius = UDim.new(1, 0)
+
+local function SetStatus(text, progress)
+    StatusLabel.Text = text
+    TweenService:Create(BarFill, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {
+        Size = UDim2.new(progress, 0, 1, 0)
+    }):Play()
+end
+
+local function FadeOut()
+    TweenService:Create(BG, TweenInfo.new(0.4, Enum.EasingStyle.Quad), {
+        BackgroundTransparency = 1
+    }):Play()
+    for _, v in ipairs(BG:GetDescendants()) do
+        if v:IsA("TextLabel") then
+            TweenService:Create(v, TweenInfo.new(0.4), { TextTransparency = 1 }):Play()
+        elseif v:IsA("Frame") then
+            TweenService:Create(v, TweenInfo.new(0.4), { BackgroundTransparency = 1 }):Play()
+        end
+    end
+    task.wait(0.45)
+    LoaderGui:Destroy()
+end
+
+SetStatus("Loading...", 0.1)
+
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library, ThemeManager, SaveManager
+
+task.spawn(function() Library      = loadstring(game:HttpGet(repo .. "Library.lua"))() end)
+task.spawn(function() ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))() end)
+task.spawn(function() SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))() end)
+
+repeat task.wait() until Library and ThemeManager and SaveManager
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+SetStatus("Loading features...", 0.6)
+
+local SILENT_AIM_KEY     = "Thx <3"
+local SilentAimUnlocked  = false
+local SilentAimHook      = nil
+local SilentAimIndexHook = nil
+local SilentAimElements  = {}
+
+local FlyConnection      = nil
+local FlyBodyVel         = nil
+local FlyBodyGyro        = nil
+local NoclipConnection   = nil
+local LiveInfoConnection = nil
+local WalkflingCooldown  = false
+local ChatHooked         = false
+local ChatMessages       = {}
+local ChatLogCollapsed   = false
+local ExecInfoVisible    = false
+
+local BotFeaturesEnabled = false
+local NpcFolder          = nil
+local RiskyActiveCount   = 0
+local RiskyCountLabel    = nil
+
+local DefaultAmbient    = Lighting.Ambient
+local DefaultOutdoor    = Lighting.OutdoorAmbient
+local DefaultBrightness = Lighting.Brightness
+local DefaultShadows    = Lighting.GlobalShadows
+local DefaultFogEnd     = Lighting.FogEnd
+
+local PlayerLabelRefs = {}
+local ServerLabelRefs = {}
+local SilentAimTargetCache = nil
+local SilentAimCacheTime   = 0
+
+local espObjects      = {}
+local stickyTarget    = nil
+local visCache        = {}
+local visFrameCount   = 0
+local espFrameCount   = 0
+local entityCache     = {}
+local entityCacheTime = 0
+local CACHE_TTL       = 0.35
+
+local JOINTS_R15 = {
+    { "Head",           "UpperTorso"    },
+    { "UpperTorso",     "LowerTorso"    },
+    { "UpperTorso",     "LeftUpperArm"  },
+    { "LeftUpperArm",   "LeftLowerArm"  },
+    { "LeftLowerArm",   "LeftHand"      },
+    { "UpperTorso",     "RightUpperArm" },
+    { "RightUpperArm",  "RightLowerArm" },
+    { "RightLowerArm",  "RightHand"     },
+    { "LowerTorso",     "LeftUpperLeg"  },
+    { "LeftUpperLeg",   "LeftLowerLeg"  },
+    { "LeftLowerLeg",   "LeftFoot"      },
+    { "LowerTorso",     "RightUpperLeg" },
+    { "RightUpperLeg",  "RightLowerLeg" },
+    { "RightLowerLeg",  "RightFoot"     },
+}
+
+local JOINTS_R6 = {
+    { "Head",  "Torso"     },
+    { "Torso", "Left Arm"  },
+    { "Torso", "Right Arm" },
+    { "Torso", "Left Leg"  },
+    { "Torso", "Right Leg" },
+}
+
+local function GetRigType(char)
+    if char:FindFirstChild("UpperTorso") then return "R15" end
+    if char:FindFirstChild("Torso")      then return "R6"  end
+    return "R15"
+end
+
+local function GetJoints(char)
+    return GetRigType(char) == "R6" and JOINTS_R6 or JOINTS_R15
+end
+
+local function GetCharBounds(char, hum, hrp)
+    local head = char:FindFirstChild("Head")
+    local topPos, botPos
+    if GetRigType(char) == "R6" then
+        topPos = head and (head.Position + Vector3.new(0, head.Size.Y / 2, 0)) or (hrp.Position + Vector3.new(0, 2.5, 0))
+        botPos = hrp.Position - Vector3.new(0, hum.HipHeight, 0)
+    else
+        local lf = char:FindFirstChild("LeftFoot")
+        local rf = char:FindFirstChild("RightFoot")
+        topPos = head and (head.Position + Vector3.new(0, head.Size.Y / 2, 0)) or (hrp.Position + Vector3.new(0, 2.5, 0))
+        if lf and rf then
+            local footY = math.min(lf.Position.Y - lf.Size.Y / 2, rf.Position.Y - rf.Size.Y / 2)
+            botPos = Vector3.new(hrp.Position.X, footY, hrp.Position.Z)
+        else
+            botPos = hrp.Position - Vector3.new(0, hum.HipHeight, 0)
+        end
+    end
+    return topPos, botPos
+end
+
+local function SafeColor(v)
+    return typeof(v) == "Color3" and v or Color3.fromRGB(255, 50, 50)
+end
+
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Filled       = false
+FOVCircle.Color        = Color3.fromRGB(255, 255, 255)
+FOVCircle.Thickness    = 0.8
+FOVCircle.Transparency = 0.2
+FOVCircle.NumSides     = 64
+FOVCircle.Visible      = false
+
+local HMLines = {}
+for i = 1, 4 do
+    local l = Drawing.new("Line")
+    l.Visible = false
+    l.Transparency = 1
+    HMLines[i] = l
+end
+
+local Camera = workspace.CurrentCamera
+
+local ChatLogGui = Instance.new("ScreenGui")
+ChatLogGui.Name            = "ChatLogger"
+ChatLogGui.DisplayOrder    = 50
+ChatLogGui.IgnoreGuiInset  = true
+ChatLogGui.ResetOnSpawn    = false
+ChatLogGui.Enabled         = false
+ChatLogGui.Parent          = LP.PlayerGui
+
+local ChatFrame = Instance.new("Frame")
+ChatFrame.Size             = UDim2.new(0, 360, 0, 260)
+ChatFrame.Position         = UDim2.new(0, 6, 1, -280)
+ChatFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+ChatFrame.BackgroundTransparency = 0.1
+ChatFrame.BorderSizePixel  = 0
+ChatFrame.Parent           = ChatLogGui
+Instance.new("UICorner", ChatFrame).CornerRadius = UDim.new(0, 8)
+
+local ChatTitleBar = Instance.new("Frame")
+ChatTitleBar.Size             = UDim2.new(1, 0, 0, 28)
+ChatTitleBar.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+ChatTitleBar.BorderSizePixel  = 0
+ChatTitleBar.Parent           = ChatFrame
+Instance.new("UICorner", ChatTitleBar).CornerRadius = UDim.new(0, 8)
+
+local ChatTitleLabel = Instance.new("TextLabel")
+ChatTitleLabel.Size               = UDim2.new(1, -60, 1, 0)
+ChatTitleLabel.Position           = UDim2.new(0, 8, 0, 0)
+ChatTitleLabel.BackgroundTransparency = 1
+ChatTitleLabel.Text               = "Chat Spy"
+ChatTitleLabel.TextColor3         = Color3.fromRGB(200, 200, 220)
+ChatTitleLabel.TextSize           = 13
+ChatTitleLabel.Font               = Enum.Font.GothamBold
+ChatTitleLabel.TextXAlignment     = Enum.TextXAlignment.Left
+ChatTitleLabel.Parent             = ChatTitleBar
+
+local CollapseBtn = Instance.new("TextButton")
+CollapseBtn.Size             = UDim2.new(0, 26, 0, 20)
+CollapseBtn.Position         = UDim2.new(1, -56, 0.5, -10)
+CollapseBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+CollapseBtn.BorderSizePixel  = 0
+CollapseBtn.Text             = "—"
+CollapseBtn.TextColor3       = Color3.fromRGB(180, 180, 200)
+CollapseBtn.TextSize         = 12
+CollapseBtn.Font             = Enum.Font.GothamBold
+CollapseBtn.Parent           = ChatTitleBar
+Instance.new("UICorner", CollapseBtn).CornerRadius = UDim.new(0, 4)
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size             = UDim2.new(0, 20, 0, 20)
+CloseBtn.Position         = UDim2.new(1, -28, 0.5, -10)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(120, 35, 35)
+CloseBtn.BorderSizePixel  = 0
+CloseBtn.Text             = "×"
+CloseBtn.TextColor3       = Color3.fromRGB(255, 255, 255)
+CloseBtn.TextSize         = 14
+CloseBtn.Font             = Enum.Font.GothamBold
+CloseBtn.Parent           = ChatTitleBar
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 4)
+
+local ChatScrollFrame = Instance.new("ScrollingFrame")
+ChatScrollFrame.Size                  = UDim2.new(1, -8, 1, -36)
+ChatScrollFrame.Position              = UDim2.new(0, 4, 0, 32)
+ChatScrollFrame.BackgroundTransparency = 1
+ChatScrollFrame.BorderSizePixel       = 0
+ChatScrollFrame.ScrollBarThickness    = 3
+ChatScrollFrame.ScrollBarImageColor3  = Color3.fromRGB(100, 100, 130)
+ChatScrollFrame.AutomaticCanvasSize   = Enum.AutomaticSize.Y
+ChatScrollFrame.CanvasSize            = UDim2.new(0, 0, 0, 0)
+ChatScrollFrame.Parent                = ChatFrame
+
+local ChatLayout = Instance.new("UIListLayout")
+ChatLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ChatLayout.Padding   = UDim.new(0, 2)
+ChatLayout.Parent    = ChatScrollFrame
+
+local function AddChatEntry(speaker, message)
+    table.insert(ChatMessages, { speaker = speaker, message = message })
+    if #ChatMessages > 100 then table.remove(ChatMessages, 1) end
+    local label = Instance.new("TextLabel")
+    label.Size               = UDim2.new(1, -6, 0, 0)
+    label.AutomaticSize      = Enum.AutomaticSize.Y
+    label.BackgroundTransparency = 1
+    label.TextColor3         = Color3.fromRGB(200, 200, 210)
+    label.TextSize           = 12
+    label.Font               = Enum.Font.Gotham
+    label.Text               = "[" .. speaker .. "]: " .. message
+    label.TextWrapped        = true
+    label.TextXAlignment     = Enum.TextXAlignment.Left
+    label.RichText           = false
+    label.LayoutOrder        = #ChatMessages
+    label.Parent             = ChatScrollFrame
+    task.defer(function()
+        ChatScrollFrame.CanvasPosition = Vector2.new(0, ChatScrollFrame.AbsoluteCanvasSize.Y)
+    end)
+end
+
+local function SetChatLogVisible(state)
+    ChatLogGui.Enabled = state
+end
+
+local function SetChatCollapsed(state)
+    ChatLogCollapsed        = state
+    ChatScrollFrame.Visible = not state
+    ChatFrame.Size          = state and UDim2.new(0, 360, 0, 28) or UDim2.new(0, 360, 0, 260)
+    CollapseBtn.Text        = state and "+" or "—"
+end
+
+CollapseBtn.MouseButton1Click:Connect(function()
+    SetChatCollapsed(not ChatLogCollapsed)
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    SetChatLogVisible(false)
+    if Toggles.ChatSpyEnabled then
+        Toggles.ChatSpyEnabled:SetValue(false)
+    end
+end)
+
+Library:MakeDraggable(ChatLogGui, ChatTitleBar)
+
+local ExecGui = Instance.new("ScreenGui")
+ExecGui.Name            = "ExecInfo"
+ExecGui.DisplayOrder    = 51
+ExecGui.IgnoreGuiInset  = true
+ExecGui.ResetOnSpawn    = false
+ExecGui.Enabled         = false
+ExecGui.Parent          = LP.PlayerGui
+
+local ExecFrame = Instance.new("Frame")
+ExecFrame.Size             = UDim2.new(0, 300, 0, 28)
+ExecFrame.Position         = UDim2.new(1, -310, 0, 6)
+ExecFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+ExecFrame.BackgroundTransparency = 0.1
+ExecFrame.BorderSizePixel  = 0
+ExecFrame.Parent           = ExecGui
+Instance.new("UICorner", ExecFrame).CornerRadius = UDim.new(0, 8)
+
+local ExecTitleBar = Instance.new("Frame")
+ExecTitleBar.Size             = UDim2.new(1, 0, 0, 28)
+ExecTitleBar.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+ExecTitleBar.BorderSizePixel  = 0
+ExecTitleBar.Parent           = ExecFrame
+Instance.new("UICorner", ExecTitleBar).CornerRadius = UDim.new(0, 8)
+
+local ExecTitleLabel = Instance.new("TextLabel")
+ExecTitleLabel.Size               = UDim2.new(1, -60, 1, 0)
+ExecTitleLabel.Position           = UDim2.new(0, 8, 0, 0)
+ExecTitleLabel.BackgroundTransparency = 1
+ExecTitleLabel.Text               = "Executor Compatibility ▾"
+ExecTitleLabel.TextColor3         = Color3.fromRGB(180, 180, 200)
+ExecTitleLabel.TextSize           = 12
+ExecTitleLabel.Font               = Enum.Font.Gotham
+ExecTitleLabel.TextXAlignment     = Enum.TextXAlignment.Left
+ExecTitleLabel.Parent             = ExecTitleBar
+
+local ExecExpandBtn = Instance.new("TextButton")
+ExecExpandBtn.Size             = UDim2.new(0, 26, 0, 20)
+ExecExpandBtn.Position         = UDim2.new(1, -56, 0.5, -10)
+ExecExpandBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+ExecExpandBtn.BorderSizePixel  = 0
+ExecExpandBtn.Text             = "+"
+ExecExpandBtn.TextColor3       = Color3.fromRGB(180, 180, 200)
+ExecExpandBtn.TextSize         = 12
+ExecExpandBtn.Font             = Enum.Font.GothamBold
+ExecExpandBtn.Parent           = ExecTitleBar
+Instance.new("UICorner", ExecExpandBtn).CornerRadius = UDim.new(0, 4)
+
+local ExecCloseBtn = Instance.new("TextButton")
+ExecCloseBtn.Size             = UDim2.new(0, 20, 0, 20)
+ExecCloseBtn.Position         = UDim2.new(1, -28, 0.5, -10)
+ExecCloseBtn.BackgroundColor3 = Color3.fromRGB(80, 35, 35)
+ExecCloseBtn.BorderSizePixel  = 0
+ExecCloseBtn.Text             = "×"
+ExecCloseBtn.TextColor3       = Color3.fromRGB(255, 255, 255)
+ExecCloseBtn.TextSize         = 14
+ExecCloseBtn.Font             = Enum.Font.GothamBold
+ExecCloseBtn.Parent           = ExecTitleBar
+Instance.new("UICorner", ExecCloseBtn).CornerRadius = UDim.new(0, 4)
+
+local ExecContent = Instance.new("Frame")
+ExecContent.Size             = UDim2.new(1, -8, 0, 0)
+ExecContent.Position         = UDim2.new(0, 4, 0, 32)
+ExecContent.BackgroundTransparency = 1
+ExecContent.AutomaticSize    = Enum.AutomaticSize.Y
+ExecContent.Visible          = false
+ExecContent.Parent           = ExecFrame
+
+local ExecLayout = Instance.new("UIListLayout")
+ExecLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ExecLayout.Padding   = UDim.new(0, 3)
+ExecLayout.Parent    = ExecContent
+
+local EXECUTORS = {
+    { name = "Volt",      hooks = true,  namecall = true,  index = true  },
+    { name = "Potassium", hooks = true,  namecall = true,  index = true  },
+    { name = "Medius",    hooks = true,  namecall = true,  index = true  },
+    { name = "Opiumware", hooks = true,  namecall = true,  index = true  },
+    { name = "Macsploit", hooks = true,  namecall = true,  index = false },
+    { name = "Celery",    hooks = true,  namecall = true,  index = true  },
+    { name = "AWP",       hooks = true,  namecall = true,  index = true  },
+    { name = "Electron",  hooks = false, namecall = false, index = false },
+}
+
+for i, exec in ipairs(EXECUTORS) do
+    local row = Instance.new("TextLabel")
+    row.Size               = UDim2.new(1, 0, 0, 18)
+    row.BackgroundTransparency = 1
+    row.Font               = Enum.Font.Gotham
+    row.TextSize           = 11
+    row.TextXAlignment     = Enum.TextXAlignment.Left
+    row.LayoutOrder        = i
+    row.Parent             = ExecContent
+    local supported = exec.hooks and exec.namecall
+    row.Text       = "  " .. exec.name .. "   hook:" .. (exec.hooks and "✓" or "✗") .. "  namecall:" .. (exec.namecall and "✓" or "✗") .. "  index:" .. (exec.index and "✓" or "✗")
+    row.TextColor3 = supported and Color3.fromRGB(140, 220, 140) or Color3.fromRGB(220, 100, 100)
+end
+
+local ExecCollapsed = true
+local function SetExecExpanded(state)
+    ExecCollapsed        = not state
+    ExecContent.Visible  = state
+    ExecExpandBtn.Text   = state and "—" or "+"
+    ExecTitleLabel.Text  = state and "Executor Compatibility ▴" or "Executor Compatibility ▾"
+    ExecFrame.Size       = UDim2.new(0, 300, 0, 28 + (state and (8 + #EXECUTORS * 21) or 0))
+end
+
+ExecExpandBtn.MouseButton1Click:Connect(function() SetExecExpanded(ExecCollapsed) end)
+ExecCloseBtn.MouseButton1Click:Connect(function()
+    ExecGui.Enabled = false
+    ExecInfoVisible = false
+end)
+
+Library:MakeDraggable(ExecGui, ExecTitleBar)
+
+local function GetHRP()
+    local char = LP.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function GetHum()
+    local char = LP.Character
+    return char and char:FindFirstChildOfClass("Humanoid")
+end
+
+local function IsPlayerModel(model)
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Character == model then return true end
+    end
+    return false
+end
+
+local function ScanForNpcFolder()
+    local candidates = {}
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child:IsA("Folder") or child:IsA("Model") then
+            for _, desc in ipairs(child:GetDescendants()) do
+                if desc:IsA("Humanoid") and not IsPlayerModel(desc.Parent) then
+                    table.insert(candidates, child)
+                    break
+                end
+            end
+        end
+    end
+    return candidates
+end
+
+local function GetNpcs()
+    local npcs       = {}
+    local source     = NpcFolder and {NpcFolder} or workspace:GetChildren()
+    local playerChars = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Character then playerChars[plr.Character] = true end
+    end
+    for _, obj in ipairs(source) do
+        if not playerChars[obj] then
+            local hum = obj:FindFirstChildOfClass("Humanoid")
+            if hum and hum.MaxHealth > 0 and hum.Health > 0 then
+                local hrp = obj:FindFirstChild("HumanoidRootPart")
+                if hrp then table.insert(npcs, { model = obj, hum = hum, hrp = hrp }) end
+            end
+        end
+    end
+    return npcs
+end
+
+local function HPColor(pct)
+    pct = math.clamp(pct, 0, 1)
+    if pct > 0.5 then return Color3.new(1 - (pct - 0.5) * 2, 1, 0)
+    else return Color3.new(1, pct * 2, 0) end
+end
+
+local function _UNUSED_HPColor(pct)
+    if pct > 0.5 then
+        local t = (pct - 0.5) * 2
+        return Color3.new(1 - t, 1, 0)
+    else
+        local t = pct * 2
+        return Color3.new(1, t, 0)
+    end
+end
+
+local function CleanupESP(entity)
+    if espObjects[entity] then
+        for _, d in pairs(espObjects[entity]) do
+            if d and d.Remove then d:Remove() end
+        end
+        espObjects[entity] = nil
+    end
+end
+
+local function GetEntityCache()
+    local now = tick()
+    if now - entityCacheTime < CACHE_TTL then return entityCache end
+    entityCacheTime = now
+    local cache = {}
+    local lpChar = LP.Character
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP and plr.Character then
+            local char = plr.Character
+            local hum  = char:FindFirstChildOfClass("Humanoid")
+            local hrp  = char:FindFirstChild("HumanoidRootPart")
+            if hum and hum.Health > 0 and hrp then
+                table.insert(cache, {
+                    char    = char,
+                    hum     = hum,
+                    hrp     = hrp,
+                    player  = plr,
+                    isBot   = false,
+                })
+            end
+        end
+    end
+
+    if BotFeaturesEnabled and Toggles.BotESPEnabled and Toggles.BotESPEnabled.Value then
+        for _, npc in ipairs(GetNpcs()) do
+            table.insert(cache, {
+                char   = npc.model,
+                hum    = npc.hum,
+                hrp    = npc.hrp,
+                player = nil,
+                isBot  = true,
+            })
+        end
+    end
+
+    entityCache = cache
+    return cache
+end
+
+local function IsVisible(targetPos, targetChar)
+    local lpChar = LP.Character
+    if not lpChar or not lpChar:FindFirstChild("Head") then return false end
+    local origin    = Camera.CFrame.Position
+    local direction = (targetPos - origin)
+    local ray       = Ray.new(origin, direction)
+    local ignore    = { lpChar, targetChar, Camera }
+    local hit       = workspace:FindPartOnRayWithIgnoreList(ray, ignore)
+    return hit == nil
+end
+
+local function GetSilentTarget()
+    local now = tick()
+    if now - SilentAimCacheTime < 0.016 then return SilentAimTargetCache end
+    SilentAimCacheTime = now
+
+    local fov      = Options.SilentAimFOV and Options.SilentAimFOV.Value or 150
+    local partName = Options.SilentAimPart and Options.SilentAimPart.Value or "Head"
+    local bestDist = fov
+    local closest  = nil
+    local center   = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local skip = Toggles.SilentAimTeamCheck and Toggles.SilentAimTeamCheck.Value and plr.Team == LP.Team
+            if not skip then
+                local char = plr.Character
+                if char then
+                    local part = char:FindFirstChild(partName) or char:FindFirstChild("HumanoidRootPart")
+                    local hum  = char:FindFirstChildOfClass("Humanoid")
+                    if part and hum and hum.Health > 0 then
+                        local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+                        if onScreen then
+                            local dist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                            if dist < bestDist then
+                                bestDist = dist
+                                closest  = part
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    SilentAimTargetCache = closest
+    return closest
+end
+
+local function EnableSilentAim()
+    if SilentAimHook then return end
+    if not hookmetamethod then
+        Library:Notify({ Title = "Silent Aim", Description = "hookmetamethod unavailable.", Time = 4 })
+        return
+    end
+
+    local playerMouse = LP:GetMouse()
+
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(...)
+        local args   = { ... }
+        local self   = args[1]
+        local method = getnamecallmethod()
+        if Toggles.SilentAimEnabled and Toggles.SilentAimEnabled.Value and self == workspace then
+            local target = GetSilentTarget()
+            if target then
+                if method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRay" then
+                    local ray = args[2]
+                    if typeof(ray) == "Ray" then
+                        args[2] = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * ray.Direction.Magnitude)
+                        return oldNamecall(unpack(args))
+                    end
+                elseif method == "FindPartOnRayWithWhitelist" then
+                    local ray = args[2]
+                    if typeof(ray) == "Ray" then
+                        args[2] = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * ray.Direction.Magnitude)
+                        return oldNamecall(unpack(args))
+                    end
+                elseif method == "Raycast" then
+                    if typeof(args[2]) == "Vector3" and typeof(args[3]) == "Vector3" then
+                        args[3] = (target.Position - args[2]).Unit * args[3].Magnitude
+                        return oldNamecall(unpack(args))
+                    end
+                end
+            end
+        end
+        return oldNamecall(unpack(args))
+    end)
+    SilentAimHook = oldNamecall
+
+    local oldIndex
+    oldIndex = hookmetamethod(game, "__index", function(t, k)
+        if Toggles.SilentAimEnabled and Toggles.SilentAimEnabled.Value and t == playerMouse then
+            local target = GetSilentTarget()
+            if target then
+                if k == "Target" then return target end
+                if k == "Hit"    then return CFrame.new(target.Position) end
+            end
+        end
+        return oldIndex(t, k)
+    end)
+    SilentAimIndexHook = oldIndex
+end
+
+local function SetSilentAimVisible(state)
+    for _, el in ipairs(SilentAimElements) do
+        pcall(function() el:SetVisible(state) end)
+    end
+end
+
+local function GetAimbotTarget()
+    if stickyTarget then
+        local hum = stickyTarget:FindFirstChildOfClass("Humanoid")
+        local hrp = stickyTarget:FindFirstChild("HumanoidRootPart")
+        if hum and hum.Health > 0 and hrp and stickyTarget.Parent then
+            local fov    = Options.AimbotFOV and Options.AimbotFOV.Value or 120
+            local sp, on = Camera:WorldToViewportPoint(hrp.Position)
+            local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+            local dist   = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+            if on and dist <= fov then
+                return stickyTarget
+            end
+        end
+        stickyTarget = nil
+    end
+
+    local fov     = Options.AimbotFOV and Options.AimbotFOV.Value or 120
+    local center  = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local bestDist = fov
+    local bestChar = nil
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local skip = Toggles.AimbotTeamCheck and Toggles.AimbotTeamCheck.Value and plr.Team == LP.Team
+            if not skip and plr.Character then
+                local char = plr.Character
+                local hum  = char:FindFirstChildOfClass("Humanoid")
+                local part = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+                if hum and hum.Health > 0 and part then
+                    local sp, on = Camera:WorldToViewportPoint(part.Position)
+                    if on then
+                        local dist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                        local vis  = Toggles.AimbotVisibleCheck and Toggles.AimbotVisibleCheck.Value
+                        if dist < bestDist and (not vis or IsVisible(part.Position, char)) then
+                            bestDist = dist
+                            bestChar = char
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if bestChar then stickyTarget = bestChar end
+    return bestChar
+end
+
+local function StopFly()
+    if FlyConnection then FlyConnection:Disconnect() FlyConnection = nil end
+    if FlyBodyVel    then FlyBodyVel:Destroy()       FlyBodyVel    = nil end
+    if FlyBodyGyro   then FlyBodyGyro:Destroy()      FlyBodyGyro   = nil end
+    local hrp = GetHRP()
+    if hrp then hrp.AssemblyLinearVelocity = Vector3.zero end
+end
+
+local function StartFly()
+    StopFly()
+    local hrp = GetHRP()
+    if not hrp then return end
+    FlyBodyVel            = Instance.new("BodyVelocity")
+    FlyBodyVel.Velocity   = Vector3.zero
+    FlyBodyVel.MaxForce   = Vector3.new(1e9, 1e9, 1e9)
+    FlyBodyVel.P          = 1e4
+    FlyBodyVel.Parent     = hrp
+    FlyBodyGyro           = Instance.new("BodyGyro")
+    FlyBodyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+    FlyBodyGyro.P         = 1e4
+    FlyBodyGyro.D         = 100
+    FlyBodyGyro.CFrame    = hrp.CFrame
+    FlyBodyGyro.Parent    = hrp
+    local currentVel = Vector3.zero
+    FlyConnection = RunService.RenderStepped:Connect(function(dt)
+        if not Toggles.FlyEnabled.Value then StopFly() return end
+        local speed   = Options.FlySpeed.Value
+        local cam     = workspace.CurrentCamera
+        local moveDir = Vector3.zero
+        if UIS:IsKeyDown(Enum.KeyCode.W)         then moveDir = moveDir + cam.CFrame.LookVector  end
+        if UIS:IsKeyDown(Enum.KeyCode.S)         then moveDir = moveDir - cam.CFrame.LookVector  end
+        if UIS:IsKeyDown(Enum.KeyCode.A)         then moveDir = moveDir - cam.CFrame.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.D)         then moveDir = moveDir + cam.CFrame.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.Space)     then moveDir = moveDir + Vector3.new(0, 1, 0)   end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then moveDir = moveDir - Vector3.new(0, 1, 0)   end
+        local targetVel = moveDir.Magnitude > 0 and moveDir.Unit * speed or Vector3.zero
+        currentVel = currentVel:Lerp(targetVel, math.min(dt * 12, 1))
+        FlyBodyVel.Velocity = currentVel
+        FlyBodyGyro.CFrame  = cam.CFrame
+    end)
+end
+
+local function StopNoclip()
+    if NoclipConnection then NoclipConnection:Disconnect() NoclipConnection = nil end
+    local char = LP.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = true end
+    end
+end
+
+local function StartNoclip()
+    StopNoclip()
+    NoclipConnection = RunService.Stepped:Connect(function()
+        if not Toggles.NoclipEnabled.Value then StopNoclip() return end
+        local char = LP.Character
+        if not char then return end
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = false end
+        end
+    end)
+end
+
+local function DoWalkfling()
+    if WalkflingCooldown then return end
+    local hum = GetHum()
+    if not hum then return end
+    WalkflingCooldown = true
+    local original = hum.WalkSpeed
+    hum.WalkSpeed = Options.WalkflingSpeed.Value
+    task.wait(Options.WalkflingDuration.Value / 1000)
+    hum.WalkSpeed = original
+    task.wait(0.3)
+    WalkflingCooldown = false
+end
+
+local function HookChat()
+    if ChatHooked then return end
+    ChatHooked = true
+    pcall(function()
+        if TextChatService.ChatVersion == Enum.ChatVersion.LegacyChatService then
+            for _, plr in ipairs(Players:GetPlayers()) do
+                plr.Chatted:Connect(function(msg)
+                    if Toggles.ChatSpyEnabled and Toggles.ChatSpyEnabled.Value then
+                        AddChatEntry(plr.Name, msg)
+                    end
+                end)
+            end
+            Players.PlayerAdded:Connect(function(plr)
+                plr.Chatted:Connect(function(msg)
+                    if Toggles.ChatSpyEnabled and Toggles.ChatSpyEnabled.Value then
+                        AddChatEntry(plr.Name, msg)
+                    end
+                end)
+            end)
+        else
+            TextChatService.MessageReceived:Connect(function(msg)
+                if Toggles.ChatSpyEnabled and Toggles.ChatSpyEnabled.Value then
+                    local speaker = msg.TextSource and msg.TextSource.Name or "?"
+                    AddChatEntry(speaker, msg.Text)
+                end
+            end)
+        end
+    end)
+end
+
+local function NotifyRisky(featureName)
+    if Toggles.DisableWarnings and Toggles.DisableWarnings.Value then return end
+    Library:Notify({
+        Title       = "⚠ " .. featureName,
+        Description = "Detectable — may result in a permanent ban.",
+        Time        = 5,
+    })
+end
+
+local function ShowConfirm(featureName, onConfirm, onCancel)
+    if Toggles.DisableWarnings and Toggles.DisableWarnings.Value then
+        onConfirm()
+        return
+    end
+    local Gui = Instance.new("ScreenGui")
+    Gui.Name           = "ConfirmDialog"
+    Gui.DisplayOrder   = 1000
+    Gui.IgnoreGuiInset = true
+    Gui.ResetOnSpawn   = false
+    Gui.Parent         = LP.PlayerGui
+
+    local Overlay = Instance.new("Frame")
+    Overlay.Size                   = UDim2.new(1, 0, 1, 0)
+    Overlay.BackgroundColor3       = Color3.fromRGB(0, 0, 0)
+    Overlay.BackgroundTransparency = 0.55
+    Overlay.BorderSizePixel        = 0
+    Overlay.Parent                 = Gui
+
+    local Box = Instance.new("Frame")
+    Box.Size             = UDim2.new(0, 280, 0, 148)
+    Box.Position         = UDim2.new(0.5, -140, 0.5, -74)
+    Box.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+    Box.BorderSizePixel  = 0
+    Box.Parent           = Gui
+    Instance.new("UICorner", Box).CornerRadius = UDim.new(0, 10)
+
+    local WarnLabel = Instance.new("TextLabel")
+    WarnLabel.Size               = UDim2.new(1, -16, 0, 24)
+    WarnLabel.Position           = UDim2.new(0, 8, 0, 10)
+    WarnLabel.BackgroundTransparency = 1
+    WarnLabel.Text               = "⚠  " .. featureName:upper()
+    WarnLabel.TextColor3         = Color3.fromRGB(255, 65, 65)
+    WarnLabel.TextSize           = 14
+    WarnLabel.Font               = Enum.Font.GothamBold
+    WarnLabel.TextXAlignment     = Enum.TextXAlignment.Left
+    WarnLabel.Parent             = Box
+
+    local Msg = Instance.new("TextLabel")
+    Msg.Size               = UDim2.new(1, -16, 0, 44)
+    Msg.Position           = UDim2.new(0, 8, 0, 40)
+    Msg.BackgroundTransparency = 1
+    Msg.Text               = "Detectable — may result in a permanent ban. Enable anyway?"
+    Msg.TextColor3         = Color3.fromRGB(200, 200, 210)
+    Msg.TextSize           = 12
+    Msg.Font               = Enum.Font.Gotham
+    Msg.TextWrapped        = true
+    Msg.TextXAlignment     = Enum.TextXAlignment.Left
+    Msg.Parent             = Box
+
+    local BtnYes = Instance.new("TextButton")
+    BtnYes.Size             = UDim2.new(0, 112, 0, 30)
+    BtnYes.Position         = UDim2.new(0, 8, 1, -40)
+    BtnYes.BackgroundColor3 = Color3.fromRGB(160, 35, 35)
+    BtnYes.BorderSizePixel  = 0
+    BtnYes.Text             = "Enable"
+    BtnYes.TextColor3       = Color3.fromRGB(255, 255, 255)
+    BtnYes.TextSize         = 12
+    BtnYes.Font             = Enum.Font.GothamBold
+    BtnYes.Parent           = Box
+    Instance.new("UICorner", BtnYes).CornerRadius = UDim.new(0, 6)
+
+    local BtnNo = Instance.new("TextButton")
+    BtnNo.Size             = UDim2.new(0, 112, 0, 30)
+    BtnNo.Position         = UDim2.new(1, -120, 1, -40)
+    BtnNo.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
+    BtnNo.BorderSizePixel  = 0
+    BtnNo.Text             = "Cancel"
+    BtnNo.TextColor3       = Color3.fromRGB(190, 190, 200)
+    BtnNo.TextSize         = 12
+    BtnNo.Font             = Enum.Font.Gotham
+    BtnNo.Parent           = Box
+    Instance.new("UICorner", BtnNo).CornerRadius = UDim.new(0, 6)
+
+    BtnYes.MouseButton1Click:Connect(function() Gui:Destroy() onConfirm() end)
+    BtnNo.MouseButton1Click:Connect(function()  Gui:Destroy() onCancel()  end)
+end
+
+local function ShowBotConfirm(folderName, onConfirm, onCancel)
+    local Gui = Instance.new("ScreenGui")
+    Gui.Name           = "BotConfirm"
+    Gui.DisplayOrder   = 1000
+    Gui.IgnoreGuiInset = true
+    Gui.ResetOnSpawn   = false
+    Gui.Parent         = LP.PlayerGui
+
+    local Overlay = Instance.new("Frame")
+    Overlay.Size                   = UDim2.new(1, 0, 1, 0)
+    Overlay.BackgroundColor3       = Color3.fromRGB(0, 0, 0)
+    Overlay.BackgroundTransparency = 0.55
+    Overlay.BorderSizePixel        = 0
+    Overlay.Parent                 = Gui
+
+    local Box = Instance.new("Frame")
+    Box.Size             = UDim2.new(0, 280, 0, 128)
+    Box.Position         = UDim2.new(0.5, -140, 0.5, -64)
+    Box.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+    Box.BorderSizePixel  = 0
+    Box.Parent           = Gui
+    Instance.new("UICorner", Box).CornerRadius = UDim.new(0, 10)
+
+    local Msg = Instance.new("TextLabel")
+    Msg.Size               = UDim2.new(1, -16, 0, 56)
+    Msg.Position           = UDim2.new(0, 8, 0, 10)
+    Msg.BackgroundTransparency = 1
+    Msg.Text               = 'NPC folder "' .. folderName .. '" found. Use it for bot targeting?'
+    Msg.TextColor3         = Color3.fromRGB(200, 200, 210)
+    Msg.TextSize           = 12
+    Msg.Font               = Enum.Font.Gotham
+    Msg.TextWrapped        = true
+    Msg.TextXAlignment     = Enum.TextXAlignment.Left
+    Msg.Parent             = Box
+
+    local BtnYes = Instance.new("TextButton")
+    BtnYes.Size             = UDim2.new(0, 112, 0, 30)
+    BtnYes.Position         = UDim2.new(0, 8, 1, -40)
+    BtnYes.BackgroundColor3 = Color3.fromRGB(40, 90, 160)
+    BtnYes.BorderSizePixel  = 0
+    BtnYes.Text             = "Use It"
+    BtnYes.TextColor3       = Color3.fromRGB(255, 255, 255)
+    BtnYes.TextSize         = 12
+    BtnYes.Font             = Enum.Font.GothamBold
+    BtnYes.Parent           = Box
+    Instance.new("UICorner", BtnYes).CornerRadius = UDim.new(0, 6)
+
+    local BtnNo = Instance.new("TextButton")
+    BtnNo.Size             = UDim2.new(0, 112, 0, 30)
+    BtnNo.Position         = UDim2.new(1, -120, 1, -40)
+    BtnNo.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
+    BtnNo.BorderSizePixel  = 0
+    BtnNo.Text             = "Scan All"
+    BtnNo.TextColor3       = Color3.fromRGB(190, 190, 200)
+    BtnNo.TextSize         = 12
+    BtnNo.Font             = Enum.Font.Gotham
+    BtnNo.Parent           = Box
+    Instance.new("UICorner", BtnNo).CornerRadius = UDim.new(0, 6)
+
+    BtnYes.MouseButton1Click:Connect(function() Gui:Destroy() onConfirm() end)
+    BtnNo.MouseButton1Click:Connect(function()  Gui:Destroy() onCancel()  end)
+end
+
+local function UpdateRiskyCount(delta)
+    RiskyActiveCount = math.max(0, RiskyActiveCount + delta)
+    if RiskyCountLabel and RiskyCountLabel.SetText then
+        if RiskyActiveCount > 0 then
+            RiskyCountLabel:SetText("⚠ " .. RiskyActiveCount .. " risky " .. (RiskyActiveCount == 1 and "feature" or "features") .. " active")
+            RiskyCountLabel:SetVisible(true)
+        else
+            RiskyCountLabel:SetVisible(false)
+        end
+    end
+end
+
+SetStatus("Building UI...", 0.85)
+
+local Window = Library:CreateWindow({
+    Title            = "My Script",
+    Footer           = "v1.0.0",
+    Center           = true,
+    AutoShow         = true,
+    ShowCustomCursor = true,
+    ToggleKeybind    = Enum.KeyCode.RightControl,
+})
+
+local Tabs = {
+    Combat   = Window:AddTab("Combat",   "sword"   ),
+    Visuals  = Window:AddTab("Visuals",  "eye"     ),
+    Misc     = Window:AddTab("Misc",     "zap"     ),
+    Settings = Window:AddTab("Settings", "settings"),
+}
+
+local CombatLeft  = Tabs.Combat:AddLeftGroupbox("Aimbot")
+local CombatRight = Tabs.Combat:AddRightGroupbox("Silent Aim")
+
+local AimbotTabbox = CombatLeft:AddTabbox()
+local PlayerAimTab = AimbotTabbox:AddTab("Player")
+
+PlayerAimTab:AddToggle("AimbotEnabled",      { Text = "Enable Aimbot",  Default = false })
+PlayerAimTab:AddDropdown("AimbotTargetPart", { Text = "Target Part",    Values = { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, Default = 1 })
+PlayerAimTab:AddSlider("AimbotFOV",          { Text = "FOV",            Default = 120, Min = 10, Max = 500, Rounding = 0, Suffix = "px" })
+PlayerAimTab:AddSlider("AimbotSmoothing",    { Text = "Smoothing",      Default = 10,  Min = 1,  Max = 100, Rounding = 1 })
+PlayerAimTab:AddToggle("AimbotVisibleCheck", { Text = "Visible Check",  Default = true })
+PlayerAimTab:AddToggle("AimbotTeamCheck",    { Text = "Team Check",     Default = true })
+PlayerAimTab:AddToggle("TriggerbotEnabled",  { Text = "⚠ Triggerbot",   Default = false, Risky = true })
+PlayerAimTab:AddSlider("TriggerbotDelay",    { Text = "Trigger Delay",  Default = 50, Min = 0, Max = 500, Rounding = 0, Suffix = "ms" })
+
+local PredLeft  = Tabs.Combat:AddLeftGroupbox("Prediction")
+local PredRight = Tabs.Combat:AddRightGroupbox("Anti-Aim")
+
+PredLeft:AddToggle("PredictionEnabled",  { Text = "Enable Prediction", Default = false })
+PredLeft:AddSlider("PredictionFactor",   { Text = "Factor",            Default = 5, Min = 0, Max = 20, Rounding = 1 })
+PredLeft:AddDropdown("PredictionMethod", { Text = "Method",            Values = { "Linear", "Quadratic", "Ballistic" }, Default = 1 })
+
+PredRight:AddToggle("AntiAimEnabled", { Text = "⚠ Anti-Aim", Default = false, Risky = true })
+PredRight:AddDropdown("AntiAimMode",  { Text = "Mode",        Values = { "Spin", "Jitter", "Static" }, Default = 1 })
+PredRight:AddSlider("AntiAimAngle",   { Text = "Angle",       Default = 180, Min = 0, Max = 360, Rounding = 0, Suffix = "°" })
+
+CombatRight:AddButton({
+    Text = "Executor Info",
+    Func = function()
+        ExecInfoVisible = not ExecInfoVisible
+        ExecGui.Enabled = ExecInfoVisible
+    end,
+})
+CombatRight:AddDivider()
+CombatRight:AddInput("SilentAimKey", {
+    Text        = "Unlock Key",
+    Default     = "",
+    Placeholder = 'Hint: "Thx <3"',
+    Finished    = true,
+    Callback    = function(val)
+        if val == "" and SilentAimUnlocked then
+            Library:Notify({ Title = "Silent Aim", Description = "Key removed — type it again to restore.", Time = 6 })
+            SilentAimUnlocked = false
+            SetSilentAimVisible(false)
+            if Toggles.SilentAimEnabled and Toggles.SilentAimEnabled.Value then
+                Toggles.SilentAimEnabled:SetValue(false)
+                UpdateRiskyCount(-1)
+            end
+        elseif val == SILENT_AIM_KEY then
+            SilentAimUnlocked = true
+            SetSilentAimVisible(true)
+            Library:Notify({ Title = "Silent Aim", Description = "Unlocked.", Time = 2 })
+        elseif val ~= "" then
+            Library:Notify({ Title = "Silent Aim", Description = "Wrong key.", Time = 2 })
+        end
+    end,
+})
+
+local SAEnabled = CombatRight:AddToggle("SilentAimEnabled", { Text = "⚠ Enable Silent Aim", Default = false, Risky = true, Visible = false })
+table.insert(SilentAimElements, SAEnabled)
+local SAPart = CombatRight:AddDropdown("SilentAimPart", { Text = "Target Part", Values = { "Head", "HumanoidRootPart", "UpperTorso" }, Default = 1, Visible = false })
+table.insert(SilentAimElements, SAPart)
+local SAFOV = CombatRight:AddSlider("SilentAimFOV", { Text = "FOV", Default = 150, Min = 10, Max = 500, Rounding = 0, Suffix = "px", Visible = false })
+table.insert(SilentAimElements, SAFOV)
+local SATeam = CombatRight:AddToggle("SilentAimTeamCheck", { Text = "Team Check", Default = true, Visible = false })
+table.insert(SilentAimElements, SATeam)
+
+local VisualsLeft  = Tabs.Visuals:AddLeftGroupbox("ESP")
+local VisualsRight = Tabs.Visuals:AddRightGroupbox("World")
+
+local ESPTabbox    = VisualsLeft:AddTabbox()
+local PlayerESPTab = ESPTabbox:AddTab("Player")
+
+PlayerESPTab:AddToggle("ESPEnabled",          { Text = "Enable ESP",     Default = false })
+local ESPBoxToggle = PlayerESPTab:AddToggle("ESPBoxEnabled", { Text = "Box ESP", Default = true })
+ESPBoxToggle:AddColorPicker("ESPBoxColor",    { Title = "Box Color",     Default = Color3.new(1, 0, 0),   Transparency = 0 })
+PlayerESPTab:AddToggle("ESPNameEnabled",      { Text = "Name ESP",       Default = true })
+PlayerESPTab:AddToggle("ESPTracerEnabled",    { Text = "Tracer",         Default = true })
+PlayerESPTab:AddToggle("ESPHealthBarEnabled", { Text = "Health Bar",     Default = true })
+PlayerESPTab:AddToggle("ESPHealthNumerical",  { Text = "Show HP Number", Default = false })
+PlayerESPTab:AddToggle("ESPDistanceEnabled",  { Text = "Show Distance",  Default = true })
+PlayerESPTab:AddSlider("ESPMaxDistance",      { Text = "Max Distance",   Default = 1000, Min = 50, Max = 5000, Rounding = 0, Suffix = " studs" })
+PlayerESPTab:AddToggle("ESPTeamCheck",        { Text = "Team Check",     Default = true })
+PlayerESPTab:AddToggle("ESPVisibleCheck",     { Text = "Visible Only",   Default = false })
+PlayerESPTab:AddDropdown("ESPBoxType",        { Text = "Box Type",       Values = { "2D Box", "Corner Box" }, Default = 1 })
+local ChamsToggle = PlayerESPTab:AddToggle("ChamsEnabled", { Text = "⚠ Chams", Default = false, Risky = true })
+ChamsToggle:AddColorPicker("ChamsColorVisible", { Title = "Visible", Default = Color3.new(0, 0.5, 1), Transparency = 0 })
+ChamsToggle:AddColorPicker("ChamsColorHidden",  { Title = "Hidden",  Default = Color3.new(1, 0, 0),   Transparency = 0.4 })
+
+VisualsRight:AddSlider("CameraFOV",             { Text = "Camera FOV",      Default = 70,  Min = 30, Max = 120, Rounding = 0, Suffix = "°" })
+VisualsRight:AddToggle("RemoveFog",             { Text = "Remove Fog",      Default = false })
+VisualsRight:AddToggle("SkyboxEnabled",         { Text = "Skybox Override", Default = false })
+VisualsRight:AddDropdown("SkyboxPreset",        { Text = "Preset",          Values = { "Default", "Night", "Sunset", "Space" }, Default = 1 })
+
+local MiscLeft  = Tabs.Misc:AddLeftGroupbox("Player")
+local MiscRight = Tabs.Misc:AddRightGroupbox("Info")
+
+local MiscTabbox1   = MiscLeft:AddTabbox()
+local MovementTab   = MiscTabbox1:AddTab("Movement")
+local UtilityTab    = MiscTabbox1:AddTab("Utility")
+
+local MiscTabbox2   = MiscLeft:AddTabbox()
+local ServerTab     = MiscTabbox2:AddTab("Server")
+local PlayerListTab = MiscTabbox2:AddTab("Players")
+
+local InfoTabbox1   = MiscRight:AddTabbox()
+local PlayerInfoTab = InfoTabbox1:AddTab("Player")
+local ServerInfoTab = InfoTabbox1:AddTab("Server")
+
+MovementTab:AddSlider("WalkSpeed", { Text = "Walk Speed", Default = 16, Min = 0, Max = 500, Rounding = 0, Suffix = " WS" })
+MovementTab:AddButton({ Text = "Reset Walkspeed", Func = function()
+    Options.WalkSpeed:SetValue(16)
+    local hum = GetHum()
+    if hum then hum.WalkSpeed = 16 end
+    Library:Notify({ Title = "Walkspeed", Description = "Reset to 16.", Time = 2 })
+end })
+MovementTab:AddSlider("JumpPower",    { Text = "Jump Power",    Default = 50, Min = 0, Max = 500, Rounding = 0, Suffix = " JP" })
+MovementTab:AddToggle("InfiniteJump", { Text = "Infinite Jump", Default = false })
+local FlyToggle = MovementTab:AddToggle("FlyEnabled", { Text = "Fly", Default = false })
+FlyToggle:AddKeyPicker("FlyKeybind", { Text = "Fly Keybind", Default = "F", Mode = "Toggle" })
+MovementTab:AddSlider("FlySpeed",      { Text = "Fly Speed", Default = 50, Min = 5, Max = 300, Rounding = 0, Suffix = " SP" })
+MovementTab:AddToggle("NoclipEnabled", { Text = "Noclip",    Default = false })
+
+UtilityTab:AddToggle("AntiAFK",          { Text = "Anti-AFK",       Default = false })
+UtilityTab:AddToggle("ChatSpyEnabled",   { Text = "Chat Spy",       Default = false })
+UtilityTab:AddToggle("WalkflingEnabled", { Text = "⚠ Walkfling",   Default = false, Risky = true })
+UtilityTab:AddSlider("WalkflingSpeed",    { Text = "Fling Speed",   Default = 500, Min = 100, Max = 2000, Rounding = 0, Suffix = " WS" })
+UtilityTab:AddSlider("WalkflingDuration", { Text = "Fling Duration",Default = 100, Min = 50,  Max = 500,  Rounding = 0, Suffix = "ms"  })
+UtilityTab:AddButton({ Text = "Fling Now", Func = function() if Toggles.WalkflingEnabled.Value then DoWalkfling() end end })
+UtilityTab:AddToggle("LagSwitchEnabled",  { Text = "⚠ Lag Switch [G]", Default = false, Risky = true })
+UtilityTab:AddToggle("FullbrightEnabled", { Text = "Fullbright",        Default = false })
+
+ServerTab:AddButton({ Text = "Rejoin",      Func = function() TeleportService:Teleport(game.PlaceId, LP) end })
+ServerTab:AddButton({ Text = "Copy Job ID", Func = function() setclipboard(game.JobId) Library:Notify({ Title = "Copied", Description = "Job ID copied.", Time = 2 }) end })
+ServerTab:AddDropdown("ServerHopThreshold", { Text = "Max Players", Values = { "5", "10", "30", "50" }, Default = 2 })
+ServerTab:AddButton({ Text = "Hop Now", Func = function()
+    local threshold = tonumber(Options.ServerHopThreshold.Value) or 10
+    Library:Notify({ Title = "Server Hop", Description = "Searching...", Time = 3 })
+    task.spawn(function()
+        local ok, result = pcall(function()
+            return game:GetService("HttpService"):JSONDecode(
+                game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100")
+            )
+        end)
+        if not ok or not result or not result.data then
+            Library:Notify({ Title = "Server Hop", Description = "Failed to fetch servers.", Time = 4 })
+            return
+        end
+        for _, server in ipairs(result.data) do
+            if server.playing and server.playing < threshold and server.id ~= game.JobId then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, LP)
+                return
+            end
+        end
+        Library:Notify({ Title = "Server Hop", Description = "No suitable server found.", Time = 4 })
+    end)
+end })
+
+PlayerListTab:AddDropdown("PlayerTarget", { Text = "Select Player", SpecialType = "Player", ExcludeLocalPlayer = true })
+PlayerListTab:AddButton({ Text = "Teleport To", Func = function()
+    local name = Options.PlayerTarget.Value
+    local plr  = name and Players:FindFirstChild(name)
+    if not plr or not plr.Character then Library:Notify({ Title = "Players", Description = "Player not found.", Time = 2 }) return end
+    local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+    local myHRP = GetHRP()
+    if hrp and myHRP then myHRP.CFrame = hrp.CFrame + Vector3.new(0, 3, 0) end
+end })
+PlayerListTab:AddButton({ Text = "Bring Player", Func = function()
+    local name = Options.PlayerTarget.Value
+    local plr  = name and Players:FindFirstChild(name)
+    if not plr or not plr.Character then return end
+    local theirHRP = plr.Character:FindFirstChild("HumanoidRootPart")
+    local myHRP    = GetHRP()
+    if theirHRP and myHRP then theirHRP.CFrame = myHRP.CFrame + Vector3.new(2, 0, 0) end
+end })
+
+local function BuildPlayerInfoLabels()
+    for _, field in ipairs({ "Name", "Display", "User ID", "Account Age", "Team", "Health", "Walk Speed", "Position" }) do
+        PlayerLabelRefs[field] = PlayerInfoTab:AddLabel({ Text = field .. ": ...", DoesWrap = false })
+    end
+end
+
+local function BuildServerInfoLabels()
+    for _, field in ipairs({ "Place ID", "Game ID", "Job ID", "Players", "Place Version", "Creator ID", "Private Server" }) do
+        ServerLabelRefs[field] = ServerInfoTab:AddLabel({ Text = field .. ": ...", DoesWrap = false })
+    end
+end
+
+local function UpdatePlayerInfo()
+    local char = LP.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    local pos  = hrp and hrp.Position or Vector3.zero
+    local data = {
+        ["Name"]        = LP.Name,
+        ["Display"]     = LP.DisplayName,
+        ["User ID"]     = tostring(LP.UserId),
+        ["Account Age"] = LP.AccountAge .. " days",
+        ["Team"]        = LP.Team and LP.Team.Name or "None",
+        ["Health"]      = (hum and math.floor(hum.Health) or "?") .. " / " .. (hum and math.floor(hum.MaxHealth) or "?"),
+        ["Walk Speed"]  = tostring(hum and math.floor(hum.WalkSpeed) or "?"),
+        ["Position"]    = string.format("%.1f, %.1f, %.1f", pos.X, pos.Y, pos.Z),
+    }
+    for field, ref in pairs(PlayerLabelRefs) do
+        if ref and ref.SetText then ref:SetText(field .. ": " .. (data[field] or "?")) end
+    end
+end
+
+local function UpdateServerInfo()
+    local data = {
+        ["Place ID"]       = tostring(game.PlaceId),
+        ["Game ID"]        = tostring(game.GameId),
+        ["Job ID"]         = game.JobId,
+        ["Players"]        = #Players:GetPlayers() .. " / " .. Players.MaxPlayers,
+        ["Place Version"]  = tostring(game.PlaceVersion),
+        ["Creator ID"]     = tostring(game.CreatorId),
+        ["Private Server"] = tostring(game.PrivateServerId ~= ""),
+    }
+    for field, ref in pairs(ServerLabelRefs) do
+        if ref and ref.SetText then ref:SetText(field .. ": " .. (data[field] or "?")) end
+    end
+end
+
+BuildPlayerInfoLabels()
+BuildServerInfoLabels()
+UpdatePlayerInfo()
+UpdateServerInfo()
+
+local InfoThrottle = 0
+LiveInfoConnection = RunService.Heartbeat:Connect(function(dt)
+    InfoThrottle = InfoThrottle + dt
+    if InfoThrottle >= 0.5 then
+        InfoThrottle = 0
+        UpdatePlayerInfo()
+        UpdateServerInfo()
+    end
+end)
+
+MiscRight:AddButton({ Text = "Force Refresh", Func = function()
+    UpdatePlayerInfo()
+    UpdateServerInfo()
+    Library:Notify({ Title = "Info", Description = "Refreshed.", Time = 1 })
+end })
+
+local MenuGroup = Tabs.Settings:AddLeftGroupbox("Menu")
+RiskyCountLabel = MenuGroup:AddLabel({ Text = "", DoesWrap = false, Visible = false })
+
+MenuGroup:AddToggle("EnableBotFeatures", {
+    Text    = "Enable Bot Features",
+    Default = false,
+    Tooltip = "Adds Bot Aimbot and Bot ESP tabs",
+})
+MenuGroup:AddInput("NpcFolderPath", {
+    Text        = "NPC Folder Name",
+    Default     = "",
+    Placeholder = "e.g. Enemies",
+    Finished    = true,
+    Callback    = function(val)
+        if val == "" then
+            NpcFolder = nil
+        else
+            local found = workspace:FindFirstChild(val)
+            if found then
+                NpcFolder = found
+                Library:Notify({ Title = "Bot", Description = "NPC folder: " .. val, Time = 3 })
+            else
+                Library:Notify({ Title = "Bot", Description = "Folder not found.", Time = 3 })
+            end
+        end
+    end,
+})
+MenuGroup:AddToggle("KeybindMenuOpen",  { Text = "Show Keybind Menu", Default = false, Callback = function(v) Library.KeybindFrame.Visible = v end })
+MenuGroup:AddToggle("ShowCustomCursor", { Text = "Custom Cursor",     Default = true,  Callback = function(v) Library.ShowCustomCursor = v   end })
+MenuGroup:AddToggle("DisableWarnings",  { Text = "Disable Risky Warnings", Default = false })
+MenuGroup:AddDropdown("NotificationSide", { Text = "Notification Side", Values = { "Left", "Right" }, Default = 1, Callback = function(v) Library:SetNotifySide(v) end })
+MenuGroup:AddLabel("Menu Keybind"):AddKeyPicker("MenuKeybind", { Default = "RightControl", NoUI = true, Text = "Menu Keybind" })
+Library.ToggleKeybind = Options.MenuKeybind
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+ThemeManager:SetFolder("MyScript")
+SaveManager:SetFolder("MyScript/configs")
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:BuildConfigSection(Tabs.Settings)
+
+local AimbotBotTabAdded = false
+local ESPBotTabAdded    = false
+local AimbotTabboxRef   = AimbotTabbox
+local ESPTabboxRef      = ESPTabbox
+
+Toggles.EnableBotFeatures:OnChanged(function(state)
+    BotFeaturesEnabled = state
+    if state then
+        if not AimbotBotTabAdded then
+            AimbotBotTabAdded = true
+            local BotAimTab = AimbotTabboxRef:AddTab("Bot")
+            BotAimTab:AddToggle("BotAimbotEnabled", { Text = "Enable Bot Aimbot", Default = false })
+            BotAimTab:AddDropdown("BotAimPart",     { Text = "Target Part", Values = { "HumanoidRootPart", "Head", "UpperTorso" }, Default = 1 })
+            BotAimTab:AddSlider("BotAimFOV",        { Text = "FOV",       Default = 180, Min = 10, Max = 500, Rounding = 0, Suffix = "px" })
+            BotAimTab:AddSlider("BotAimSmoothing",  { Text = "Smoothing", Default = 5,   Min = 1,  Max = 100, Rounding = 1 })
+        end
+        if not ESPBotTabAdded then
+            ESPBotTabAdded = true
+            local BotESPTab = ESPTabboxRef:AddTab("Bot")
+            BotESPTab:AddToggle("BotESPEnabled",     { Text = "Enable Bot ESP",  Default = false })
+            BotESPTab:AddToggle("BotESPBox",         { Text = "Box ESP",         Default = true  })
+            BotESPTab:AddToggle("BotESPName",        { Text = "Name ESP",        Default = true  })
+            BotESPTab:AddToggle("BotESPHealth",      { Text = "Health Bar",      Default = true  })
+            BotESPTab:AddToggle("BotESPNumerical",   { Text = "Show HP Number",  Default = false })
+            BotESPTab:AddSlider("BotESPMaxDistance", { Text = "Max Distance",    Default = 500,  Min = 50, Max = 3000, Rounding = 0, Suffix = " studs" })
+        end
+        Library:Notify({ Title = "Bot Features", Description = "Bot tabs added to Aimbot and ESP.", Time = 3 })
+    end
+end)
+
+Toggles.TriggerbotEnabled:OnChanged(function(state)
+    if state then
+        ShowConfirm("Triggerbot", function() UpdateRiskyCount(1) NotifyRisky("Triggerbot") end, function() Toggles.TriggerbotEnabled:SetValue(false) end)
+    else
+        UpdateRiskyCount(-1)
+    end
+end)
+
+Toggles.AntiAimEnabled:OnChanged(function(state)
+    if state then
+        ShowConfirm("Anti-Aim", function() UpdateRiskyCount(1) NotifyRisky("Anti-Aim") end, function() Toggles.AntiAimEnabled:SetValue(false) end)
+    else
+        UpdateRiskyCount(-1)
+    end
+end)
+
+Toggles.WalkflingEnabled:OnChanged(function(state)
+    if state then
+        ShowConfirm("Walkfling", function() UpdateRiskyCount(1) NotifyRisky("Walkfling") end, function() Toggles.WalkflingEnabled:SetValue(false) end)
+    else
+        UpdateRiskyCount(-1)
+    end
+end)
+
+Toggles.LagSwitchEnabled:OnChanged(function(state)
+    if state then
+        ShowConfirm("Lag Switch",
+            function()
+                UpdateRiskyCount(1)
+                NotifyRisky("Lag Switch")
+                UIS.InputBegan:Connect(function(input)
+                    if input.KeyCode == Enum.KeyCode.G and Toggles.LagSwitchEnabled.Value then
+                        local hrp = GetHRP()
+                        if hrp then hrp.Anchored = true end
+                    end
+                end)
+                UIS.InputEnded:Connect(function(input)
+                    if input.KeyCode == Enum.KeyCode.G then
+                        local hrp = GetHRP()
+                        if hrp then hrp.Anchored = false end
+                    end
+                end)
+            end,
+            function() Toggles.LagSwitchEnabled:SetValue(false) end
+        )
+    else
+        UpdateRiskyCount(-1)
+        local hrp = GetHRP()
+        if hrp then hrp.Anchored = false end
+    end
+end)
+
+Toggles.SilentAimEnabled:OnChanged(function(state)
+    if state then
+        if not SilentAimUnlocked then
+            Toggles.SilentAimEnabled:SetValue(false)
+            Library:Notify({ Title = "Silent Aim", Description = 'Enter the key first. Hint: "Thx <3"', Time = 4 })
+            return
+        end
+        ShowConfirm("Silent Aim",
+            function() UpdateRiskyCount(1) NotifyRisky("Silent Aim") EnableSilentAim() end,
+            function() Toggles.SilentAimEnabled:SetValue(false) end
+        )
+    else
+        UpdateRiskyCount(-1)
+    end
+end)
+
+Options.WalkSpeed:OnChanged(function(value)
+    local hum = GetHum()
+    if hum then hum.WalkSpeed = value end
+end)
+
+Options.JumpPower:OnChanged(function(value)
+    local hum = GetHum()
+    if hum then hum.JumpPower = value end
+end)
+
+Options.CameraFOV:OnChanged(function(value)
+    workspace.CurrentCamera.FieldOfView = value
+end)
+
+Toggles.RemoveFog:OnChanged(function(state)
+    Lighting.FogEnd = state and 1e9 or DefaultFogEnd
+end)
+
+Toggles.FlyEnabled:OnChanged(function(state)
+    if state then StartFly() else StopFly() end
+end)
+
+Toggles.NoclipEnabled:OnChanged(function(state)
+    if state then StartNoclip() else StopNoclip() end
+end)
+
+Toggles.InfiniteJump:OnChanged(function()
+    UIS.JumpRequest:Connect(function()
+        if not Toggles.InfiniteJump.Value then return end
+        local hum = GetHum()
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end)
+end)
+
+Toggles.AntiAFK:OnChanged(function(state)
+    if state then
+        task.spawn(function()
+            local vu = game:GetService("VirtualUser")
+            while Toggles.AntiAFK.Value do
+                vu:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                task.wait(0.1)
+                vu:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                task.wait(15)
+            end
+        end)
+    end
+end)
+
+Toggles.ChatSpyEnabled:OnChanged(function(state)
+    if state then
+        HookChat()
+        SetChatLogVisible(true)
+        Library:Notify({ Title = "Chat Spy", Description = "Active.", Time = 2 })
+    else
+        SetChatLogVisible(false)
+    end
+end)
+
+Toggles.FullbrightEnabled:OnChanged(function(state)
+    if state then
+        Lighting.Ambient        = Color3.fromRGB(255, 255, 255)
+        Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+        Lighting.Brightness     = 2
+        Lighting.GlobalShadows  = false
+        Lighting.FogEnd         = 1e9
+    else
+        Lighting.Ambient        = DefaultAmbient
+        Lighting.OutdoorAmbient = DefaultOutdoor
+        Lighting.Brightness     = DefaultBrightness
+        Lighting.GlobalShadows  = DefaultShadows
+        Lighting.FogEnd         = DefaultFogEnd
+    end
+end)
+
+Toggles.SkyboxEnabled:OnChanged(function(state)
+    if not state then return end
+    local preset  = Options.SkyboxPreset.Value
+    local sky     = Lighting:FindFirstChildOfClass("Sky") or Instance.new("Sky", Lighting)
+    local presets = {
+        Night  = { SkyboxBk = "rbxassetid://159454286", SkyboxDn = "rbxassetid://159454260", SkyboxFt = "rbxassetid://159454269", SkyboxLf = "rbxassetid://159454293", SkyboxRt = "rbxassetid://159454296", SkyboxUp = "rbxassetid://159454302" },
+        Sunset = { SkyboxBk = "rbxassetid://159454875", SkyboxDn = "rbxassetid://159454893", SkyboxFt = "rbxassetid://159454882", SkyboxLf = "rbxassetid://159454899", SkyboxRt = "rbxassetid://159454906", SkyboxUp = "rbxassetid://159454912" },
+        Space  = { SkyboxBk = "rbxassetid://159455023", SkyboxDn = "rbxassetid://159455041", SkyboxFt = "rbxassetid://159455031", SkyboxLf = "rbxassetid://159455048", SkyboxRt = "rbxassetid://159455055", SkyboxUp = "rbxassetid://159455062" },
+    }
+    if presets[preset] then
+        for prop, val in pairs(presets[preset]) do sky[prop] = val end
+    end
+end)
+
+LP.CharacterAdded:Connect(function(char)
+    local hum = char:WaitForChild("Humanoid")
+    hum.WalkSpeed = Options.WalkSpeed.Value
+    hum.JumpPower = Options.JumpPower.Value
+    if Toggles.FlyEnabled.Value    then task.wait(0.5) StartFly()    end
+    if Toggles.NoclipEnabled.Value then task.wait(0.5) StartNoclip() end
+    stickyTarget = nil
+end)
+
+local menuToggleKey = Enum.KeyCode.RightControl
+UIS.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == menuToggleKey then
+        
+
+Library:GiveSignal(RunService.RenderStepped:Connect(function(dt)
+    espFrameCount  = espFrameCount + 1
+    visFrameCount  = visFrameCount + 1
+
+    local espEnabled    = Toggles.ESPEnabled and Toggles.ESPEnabled.Value
+    local aimbotEnabled = Toggles.AimbotEnabled and Toggles.AimbotEnabled.Value
+    if Toggles.AimbotEnabled and Toggles.AimbotEnabled.Value and not Library.Toggled then
+        local target = GetAimbotTarget()
+        if target then
+            local partName = Options.AimbotTargetPart and Options.AimbotTargetPart.Value or "Head"
+            local part     = target:FindFirstChild(partName) or target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart")
+            if part then
+                local smoothing  = Options.AimbotSmoothing and Options.AimbotSmoothing.Value or 10
+                local targetCF   = CFrame.new(Camera.CFrame.Position, part.Position)
+                Camera.CFrame    = Camera.CFrame:Lerp(targetCF, math.min(dt * smoothing, 1))
+            end
+        end
+    end
+
+    if espFrameCount < 2 then return end
+    espFrameCount = 0
+
+    local viewportSize = Camera.ViewportSize
+    local screenBottom = Vector2.new(viewportSize.X / 2, viewportSize.Y)
+
+    local entities = GetEntityCache()
+    local validThisFrame = {}
+
+    for _, data in ipairs(entities) do
+        local char   = data.char
+        local hum    = data.hum
+        local hrp    = data.hrp
+        local isBot  = data.isBot
+
+        local skipEntity = false
+
+        if not char or not char.Parent then skipEntity = true end
+
+        if not skipEntity then
+            local myHRP = GetHRP()
+            if myHRP then
+                local dist = (myHRP.Position - hrp.Position).Magnitude
+                local maxDist = isBot
+                    and (Options.BotESPMaxDistance and Options.BotESPMaxDistance.Value or 500)
+                    or  (Options.ESPMaxDistance    and Options.ESPMaxDistance.Value    or 1000)
+                if dist > maxDist then
+                    if espObjects[char] then
+                        for _, d in pairs(espObjects[char]) do
+                            if d and d.Remove then d.Visible = false end
+                        end
+                    end
+                    skipEntity = true
+                end
+            end
+        end
+
+        if not skipEntity then
+            local hrpPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+
+            if not onScreen then
+                if espObjects[char] then
+                    for _, d in pairs(espObjects[char]) do
+                        if d then d.Visible = false end
+                    end
+                end
+                skipEntity = true
+            else
+                local shouldDraw = (isBot and (Toggles.BotESPEnabled and Toggles.BotESPEnabled.Value))
+                    or (espEnabled and not isBot)
+
+                if not shouldDraw then
+                    if espObjects[char] then
+                        for _, d in pairs(espObjects[char]) do
+                            if d then d.Visible = false end
+                        end
+                    end
+                    skipEntity = true
+                end
+
+                if not skipEntity and Toggles.ESPTeamCheck and Toggles.ESPTeamCheck.Value and not isBot then
+                    local plr = data.player
+                    if plr and plr.Team == LP.Team then
+                        if espObjects[char] then
+                            for _, d in pairs(espObjects[char]) do if d then d.Visible = false end end
+                        end
+                        skipEntity = true
+                    end
+                end
+
+                if not skipEntity and Toggles.ESPVisibleCheck and Toggles.ESPVisibleCheck.Value and not isBot then
+                    if visFrameCount >= 4 then
+                        visCache[char] = IsVisible(hrp.Position, char)
+                    end
+                    if not visCache[char] then
+                        if espObjects[char] then
+                            for _, d in pairs(espObjects[char]) do if d then d.Visible = false end end
+                        end
+                        skipEntity = true
+                    end
+                end
+
+                if visFrameCount >= 4 then visFrameCount = 0 end
+            end
+
+            if not skipEntity then
+                local hrpPos2, _ = Camera:WorldToViewportPoint(hrp.Position)
+                local hrpPos = hrpPos2
+                validThisFrame[char] = true
+
+        local topPos, _    = Camera:WorldToViewportPoint(hrp.Position + Vector3.new(0, 3, 0))
+        local botPos, _    = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3.5, 0))
+        local boxHeight    = math.abs(topPos.Y - botPos.Y)
+        local boxWidth     = boxHeight / 1.8
+        local boxX         = hrpPos.X - boxWidth / 2
+        local boxY         = hrpPos.Y - boxHeight / 2
+
+        local hpPct        = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+        local hpColor      = HPColor(hpPct)
+
+        local boxColor     = isBot and Color3.fromRGB(186, 85, 211) or (Options.ESPBoxColor and Options.ESPBoxColor.Value or Color3.fromRGB(255, 0, 0))
+
+        if not espObjects[char] then
+            espObjects[char] = {
+                Box       = Drawing.new("Square"),
+                Tracer    = Drawing.new("Line"),
+                NameText  = Drawing.new("Text"),
+                DistText  = Drawing.new("Text"),
+                HPBar     = Drawing.new("Square"),
+                HPBarBG   = Drawing.new("Square"),
+                HPText    = Drawing.new("Text"),
+            }
+        end
+
+        local esp = espObjects[char]
+        local barThick = 3
+        local barGap   = 3
+
+            local showBox    = (isBot and (Toggles.BotESPBox and Toggles.BotESPBox.Value)) or (not isBot and (Toggles.ESPBoxEnabled and Toggles.ESPBoxEnabled.Value))
+            local showTracer = not isBot and (Toggles.ESPTracerEnabled and Toggles.ESPTracerEnabled.Value)
+            local showName   = (isBot and (Toggles.BotESPName and Toggles.BotESPName.Value)) or (not isBot and (Toggles.ESPNameEnabled and Toggles.ESPNameEnabled.Value))
+            local showHP     = (isBot and (Toggles.BotESPHealth and Toggles.BotESPHealth.Value)) or (not isBot and (Toggles.ESPHealthBarEnabled and Toggles.ESPHealthBarEnabled.Value))
+            local showHPNum  = (isBot and (Toggles.BotESPNumerical and Toggles.BotESPNumerical.Value)) or (not isBot and (Toggles.ESPHealthNumerical and Toggles.ESPHealthNumerical.Value))
+            local showDist   = not isBot and (Toggles.ESPDistanceEnabled and Toggles.ESPDistanceEnabled.Value)
+
+        esp.Box.Visible     = showBox
+        esp.Box.Size        = Vector2.new(boxWidth, boxHeight)
+        esp.Box.Position    = Vector2.new(boxX, boxY)
+        esp.Box.Color       = boxColor
+        esp.Box.Thickness   = 1.5
+        esp.Box.Filled      = false
+        esp.Box.Transparency = 1
+
+        esp.Tracer.Visible      = showTracer
+        esp.Tracer.From         = screenBottom
+        esp.Tracer.To           = Vector2.new(hrpPos.X, hrpPos.Y)
+        esp.Tracer.Color        = boxColor
+        esp.Tracer.Thickness    = 1
+        esp.Tracer.Transparency = 1
+
+        local nameStr = isBot and ("[BOT] " .. char.Name) or ("[" .. (data.player and data.player.Name or "?") .. "]")
+        esp.NameText.Visible      = showName
+        esp.NameText.Text         = nameStr
+        esp.NameText.Position     = Vector2.new(hrpPos.X, boxY - 14)
+        esp.NameText.Color        = Color3.fromRGB(255, 255, 255)
+        esp.NameText.Size         = 13
+        esp.NameText.Center       = true
+        esp.NameText.Outline      = true
+        esp.NameText.Transparency = 1
+
+        if showDist and GetHRP() then
+            local dist = (GetHRP().Position - hrp.Position).Magnitude
+            esp.DistText.Visible      = true
+            esp.DistText.Text         = string.format("%.0f", dist) .. "m"
+            esp.DistText.Position     = Vector2.new(hrpPos.X, boxY + boxHeight + 2)
+            esp.DistText.Color        = Color3.fromRGB(0, 255, 255)
+            esp.DistText.Size         = 11
+            esp.DistText.Center       = true
+            esp.DistText.Outline      = true
+            esp.DistText.Transparency = 1
+        else
+            esp.DistText.Visible = false
+        end
+
+        local barX   = boxX - barThick - barGap
+        local fillH  = math.max(2, boxHeight * hpPct)
+
+
+        esp.HPBarBG.Visible      = showHP
+        esp.HPBarBG.Size         = Vector2.new(barThick, boxHeight)
+        esp.HPBarBG.Position     = Vector2.new(barX, boxY)
+        esp.HPBarBG.Color        = Color3.fromRGB(20, 20, 20)
+        esp.HPBarBG.Filled       = true
+        esp.HPBarBG.Transparency = 1
+
+        esp.HPBar.Visible      = showHP
+        esp.HPBar.Size         = Vector2.new(barThick, fillH)
+        esp.HPBar.Position     = Vector2.new(barX, boxY + boxHeight - fillH)
+        esp.HPBar.Color        = hpColor
+        esp.HPBar.Filled       = true
+        esp.HPBar.Transparency = 1
+
+        if showHPNum then
+            esp.HPText.Visible      = true
+            esp.HPText.Text         = math.floor(hum.Health) .. "hp"
+            esp.HPText.Position     = Vector2.new(barX - 1, boxY + boxHeight / 2 - 6)
+            esp.HPText.Color        = Color3.fromRGB(255, 255, 255)
+            esp.HPText.Size         = 10
+            esp.HPText.Center       = true
+            esp.HPText.Outline      = true
+            esp.HPText.Transparency = 1
+        else
+            esp.HPText.Visible = false
+        end
+            end
+        end
+    end
+
+    for entity, _ in pairs(espObjects) do
+        if not validThisFrame[entity] or not entity.Parent then
+            CleanupESP(entity)
+        end
+    end
+end))
+
+Library:OnUnload(function()
+    StopFly()
+    StopNoclip()
+    if LiveInfoConnection then LiveInfoConnection:Disconnect() end
+    for entity, _ in pairs(espObjects) do CleanupESP(entity) end
+    for _, l in ipairs(HMLines) do l:Remove() end
+    FOVCircle:Remove()
+    local hrp = GetHRP()
+    if hrp then hrp.Anchored = false end
+    ChatLogGui:Destroy()
+    ExecGui:Destroy()
+end)
+
+task.spawn(function()
+    task.wait(3)
+    local candidates = ScanForNpcFolder()
+    if #candidates > 0 then
+        ShowBotConfirm(candidates[1].Name,
+            function()
+                NpcFolder = candidates[1]
+                Library:Notify({ Title = "Bot", Description = "Using: " .. NpcFolder.Name, Time = 3 })
+            end,
+            function() NpcFolder = nil end
+        )
+    end
+end)
+
+SetStatus("Loaded.", 1)
+task.wait(0.4)
+FadeOut()
+SaveManager:LoadAutoloadConfig()
