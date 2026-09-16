@@ -1,1 +1,1988 @@
+local TweenService    = game:GetService("TweenService")
+local Players         = game:GetService("Players")
+local RunService      = game:GetService("RunService")
+local Lighting        = game:GetService("Lighting")
+local UIS             = game:GetService("UserInputService")
+local TeleportService = game:GetService("TeleportService")
+local TextChatService = game:GetService("TextChatService")
+local LP              = Players.LocalPlayer
+local Camera          = workspace.CurrentCamera
 
+local LoaderGui = Instance.new("ScreenGui")
+LoaderGui.Name            = "ScriptLoader"
+LoaderGui.IgnoreGuiInset  = true
+LoaderGui.DisplayOrder    = 999
+LoaderGui.ResetOnSpawn    = false
+LoaderGui.Parent          = LP.PlayerGui
+
+local BG = Instance.new("Frame")
+BG.Size             = UDim2.new(0, 320, 0, 130)
+BG.Position         = UDim2.new(0.5, -160, 0.5, -65)
+BG.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+BG.BorderSizePixel  = 0
+BG.Parent           = LoaderGui
+Instance.new("UICorner", BG).CornerRadius = UDim.new(0, 10)
+
+local LoadTitle = Instance.new("TextLabel")
+LoadTitle.Size               = UDim2.new(1, -20, 0, 36)
+LoadTitle.Position           = UDim2.new(0, 10, 0, 10)
+LoadTitle.BackgroundTransparency = 1
+LoadTitle.Text               = "My Script"
+LoadTitle.TextColor3         = Color3.fromRGB(255, 255, 255)
+LoadTitle.TextSize           = 20
+LoadTitle.Font               = Enum.Font.GothamBold
+LoadTitle.TextXAlignment     = Enum.TextXAlignment.Left
+LoadTitle.Parent             = BG
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size               = UDim2.new(1, -20, 0, 20)
+StatusLabel.Position           = UDim2.new(0, 10, 0, 50)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text               = "Loading..."
+StatusLabel.TextColor3         = Color3.fromRGB(160, 160, 180)
+StatusLabel.TextSize           = 13
+StatusLabel.Font               = Enum.Font.Gotham
+StatusLabel.TextXAlignment     = Enum.TextXAlignment.Left
+StatusLabel.Parent             = BG
+
+local BarBG = Instance.new("Frame")
+BarBG.Size             = UDim2.new(1, -20, 0, 3)
+BarBG.Position         = UDim2.new(0, 10, 0, 82)
+BarBG.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+BarBG.BorderSizePixel  = 0
+BarBG.Parent           = BG
+Instance.new("UICorner", BarBG).CornerRadius = UDim.new(1, 0)
+
+local BarFill = Instance.new("Frame")
+BarFill.Size             = UDim2.new(0, 0, 1, 0)
+BarFill.BackgroundColor3 = Color3.fromRGB(130, 90, 230)
+BarFill.BorderSizePixel  = 0
+BarFill.Parent           = BarBG
+Instance.new("UICorner", BarFill).CornerRadius = UDim.new(1, 0)
+
+local function SetStatus(text, progress)
+    StatusLabel.Text = text
+    TweenService:Create(BarFill, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {
+        Size = UDim2.new(progress, 0, 1, 0)
+    }):Play()
+end
+
+local function FadeOut()
+    TweenService:Create(BG, TweenInfo.new(0.4, Enum.EasingStyle.Quad), {
+        BackgroundTransparency = 1
+    }):Play()
+    for _, v in ipairs(BG:GetDescendants()) do
+        if v:IsA("TextLabel") then
+            TweenService:Create(v, TweenInfo.new(0.4), { TextTransparency = 1 }):Play()
+        elseif v:IsA("Frame") then
+            TweenService:Create(v, TweenInfo.new(0.4), { BackgroundTransparency = 1 }):Play()
+        end
+    end
+    task.wait(0.45)
+    LoaderGui:Destroy()
+end
+
+SetStatus("Loading...", 0.1)
+
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library, ThemeManager, SaveManager
+
+task.spawn(function() Library      = loadstring(game:HttpGet(repo .. "Library.lua"))() end)
+task.spawn(function() ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))() end)
+task.spawn(function() SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))() end)
+
+repeat task.wait() until Library and ThemeManager and SaveManager
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+SetStatus("Loading features...", 0.6)
+
+local SILENT_AIM_KEY     = "Thx <3"
+local SilentAimUnlocked  = false
+local SilentAimHook      = nil
+local SilentAimIndexHook = nil
+local SilentAimElements  = {}
+
+local FlyConnection     = nil
+local FlyBodyVel        = nil
+local FlyBodyGyro       = nil
+local FloatConnection   = nil
+local FloatBody         = nil
+local NoclipConnection  = nil
+local LiveInfoConn      = nil
+local WalkflingCooldown = false
+local ChatHooked        = false
+local ChatMessages      = {}
+local ExecInfoVisible   = false
+local GlobalKillActive  = false
+
+local BotFeaturesEnabled = false
+local NpcFolder          = nil
+local NpcCustomModels    = {}
+local NpcSourceMode      = "folder"
+local RiskyActiveCount   = 0
+local RiskyCountLabel    = nil
+
+local DefaultAmbient    = Lighting.Ambient
+local DefaultOutdoor    = Lighting.OutdoorAmbient
+local DefaultBrightness = Lighting.Brightness
+local DefaultShadows    = Lighting.GlobalShadows
+local DefaultFogEnd     = Lighting.FogEnd
+
+local PlayerLabelRefs    = {}
+local ServerLabelRefs    = {}
+local SilentAimCache     = nil
+local SilentAimCacheTime = 0
+
+local espObjects      = {}
+local stickyTarget    = nil
+local visCache        = {}
+local visFrameCount   = 0
+local espFrameCount   = 0
+local entityCache     = {}
+local entityCacheTime = 0
+local CACHE_TTL       = 0.35
+
+local HitboxOriginalSizes = {}
+local WhitelistData       = {}
+
+local JOINTS_R15 = {
+    { "Head",          "UpperTorso",    "upper" },
+    { "UpperTorso",    "LowerTorso",    "upper" },
+    { "UpperTorso",    "LeftUpperArm",  "upper" },
+    { "LeftUpperArm",  "LeftLowerArm",  "upper" },
+    { "LeftLowerArm",  "LeftHand",      "upper" },
+    { "UpperTorso",    "RightUpperArm", "upper" },
+    { "RightUpperArm", "RightLowerArm", "upper" },
+    { "RightLowerArm", "RightHand",     "upper" },
+    { "LowerTorso",    "LeftUpperLeg",  "lower" },
+    { "LeftUpperLeg",  "LeftLowerLeg",  "lower" },
+    { "LeftLowerLeg",  "LeftFoot",      "lower" },
+    { "LowerTorso",    "RightUpperLeg", "lower" },
+    { "RightUpperLeg", "RightLowerLeg", "lower" },
+    { "RightLowerLeg", "RightFoot",     "lower" },
+}
+
+local JOINTS_R6 = {
+    { "Head",  "Torso",     "upper" },
+    { "Torso", "Left Arm",  "upper" },
+    { "Torso", "Right Arm", "upper" },
+    { "Torso", "Left Leg",  "lower" },
+    { "Torso", "Right Leg", "lower" },
+}
+
+local function GetRigType(char)
+    if char:FindFirstChild("UpperTorso") then return "R15" end
+    if char:FindFirstChild("Torso")      then return "R6"  end
+    return "R15"
+end
+
+local function GetJoints(char)
+    return GetRigType(char) == "R6" and JOINTS_R6 or JOINTS_R15
+end
+
+local function GetModelBounds(char)
+    local minX, minY, minZ =  math.huge,  math.huge,  math.huge
+    local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+    local found = false
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+            local pos  = part.Position
+            local half = part.Size / 2
+            minX = math.min(minX, pos.X - half.X)
+            minY = math.min(minY, pos.Y - half.Y)
+            minZ = math.min(minZ, pos.Z - half.Z)
+            maxX = math.max(maxX, pos.X + half.X)
+            maxY = math.max(maxY, pos.Y + half.Y)
+            maxZ = math.max(maxZ, pos.Z + half.Z)
+            found = true
+        end
+    end
+    if not found then
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            return hrp.Position + Vector3.new(0, 2.5, 0), hrp.Position - Vector3.new(0, 3, 0), hrp.Position
+        end
+        return Vector3.zero, Vector3.zero, Vector3.zero
+    end
+    local center = Vector3.new((minX+maxX)/2, (minY+maxY)/2, (minZ+maxZ)/2)
+    return Vector3.new(center.X, maxY, center.Z),
+           Vector3.new(center.X, minY, center.Z),
+           center
+end
+
+local function HPColor(pct)
+    pct = math.clamp(pct, 0, 1)
+    if pct > 0.5 then return Color3.new(1 - (pct - 0.5) * 2, 1, 0)
+    else return Color3.new(1, pct * 2, 0) end
+end
+
+local function SafeColor(v, fallback)
+    return typeof(v) == "Color3" and v or (fallback or Color3.fromRGB(255, 50, 50))
+end
+
+local function GetWLStatus(plr)
+    if not plr then return "enemy" end
+    local data = WhitelistData[tostring(plr.UserId)]
+    return data and data.status or "enemy"
+end
+
+local function GetWLPriority(plr)
+    if not plr then return false end
+    local data = WhitelistData[tostring(plr.UserId)]
+    return data and data.priority or false
+end
+
+local function SetWLStatus(plr, status, priority)
+    WhitelistData[tostring(plr.UserId)] = {
+        name     = plr.Name,
+        status   = status,
+        priority = priority or false,
+    }
+end
+
+local function FindPlayer(val)
+    if not val or val == "" then return nil end
+    local s = tostring(val)
+    local direct = Players:FindFirstChild(s)
+    if direct then return direct end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.DisplayName == s then return plr end
+    end
+    return nil
+end
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function CanSee(origin, target, ignore)
+    rayParams.FilterDescendantsInstances = ignore
+    return workspace:Raycast(origin, target - origin, rayParams) == nil
+end
+
+local function GetHRP()
+    local char = LP.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function GetHum()
+    local char = LP.Character
+    return char and char:FindFirstChildOfClass("Humanoid")
+end
+
+local function GetEntities()
+    local now = tick()
+    if now - entityCacheTime < CACHE_TTL then return entityCache end
+    entityCacheTime = now
+    local list = {}
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local status = GetWLStatus(plr)
+            if status ~= "neutral" then
+                local char = plr.Character
+                if char then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    local hrp = char:FindFirstChild("HumanoidRootPart")
+                    if hum and hum.Health > 0 and hrp then
+                        local isFriend   = status == "friend"
+                        local isPriority = GetWLPriority(plr)
+                        if isPriority then
+                            table.insert(list, 1, { char = char, hum = hum, hrp = hrp, player = plr, isFriend = isFriend, isPriority = true })
+                        else
+                            table.insert(list, { char = char, hum = hum, hrp = hrp, player = plr, isFriend = isFriend, isPriority = false })
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if BotFeaturesEnabled
+        and Toggles.BotMasterEnabled and Toggles.BotMasterEnabled.Value
+        and Toggles.BotESPEnabled    and Toggles.BotESPEnabled.Value
+    then
+        local playerChars = {}
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr.Character then playerChars[plr.Character] = true end
+        end
+
+        local candidates = {}
+        if NpcSourceMode == "folder" and NpcFolder then
+            for _, obj in ipairs(NpcFolder:GetChildren()) do
+                table.insert(candidates, obj)
+            end
+        elseif NpcSourceMode == "models" and #NpcCustomModels > 0 then
+            for _, name in ipairs(NpcCustomModels) do
+                local found = workspace:FindFirstChild(name)
+                if found then table.insert(candidates, found) end
+            end
+        elseif NpcSourceMode == "all" then
+            for _, obj in ipairs(workspace:GetChildren()) do
+                table.insert(candidates, obj)
+            end
+        end
+
+        for _, obj in ipairs(candidates) do
+            if not playerChars[obj] then
+                local hum = obj:FindFirstChildOfClass("Humanoid")
+                if hum and hum.MaxHealth > 0 and hum.Health > 0 then
+                    local hrp = obj:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        table.insert(list, { char = obj, hum = hum, hrp = hrp, player = nil, isFriend = false, isPriority = false, isBot = true })
+                    end
+                end
+            end
+        end
+    end
+
+    entityCache = list
+    return list
+end
+
+local function GetAimbotTarget()
+    local lpChar = LP.Character
+    local lpHRP  = lpChar and lpChar:FindFirstChild("HumanoidRootPart")
+    if not lpHRP then return nil end
+
+    local useRage        = Toggles.AimbotRage and Toggles.AimbotRage.Value
+    local useTeamCheck   = Toggles.AimbotTeamCheck and Toggles.AimbotTeamCheck.Value
+    local useVisCheck    = Toggles.AimbotVisibleCheck and Toggles.AimbotVisibleCheck.Value
+    local fov            = Options.AimbotFOV and Options.AimbotFOV.Value or 120
+    local targetPartName = Options.AimbotTargetPart and Options.AimbotTargetPart.Value or "Head"
+    local center         = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+    if not useRage and stickyTarget then
+        local hum = stickyTarget:FindFirstChildOfClass("Humanoid")
+        local hrp = stickyTarget:FindFirstChild("HumanoidRootPart")
+        if hum and hum.Health > 0 and hrp and stickyTarget.Parent then
+            local sp, on = Camera:WorldToViewportPoint(hrp.Position)
+            if on and (Vector2.new(sp.X, sp.Y) - center).Magnitude <= fov then
+                return stickyTarget
+            end
+        end
+        stickyTarget = nil
+    end
+
+    local bestDist      = fov
+    local bestChar      = nil
+    local foundPriority = false
+
+    for _, data in ipairs(GetEntities()) do
+        if not data.isBot and not data.isFriend then
+            local skip = false
+            if useTeamCheck and LP.Team ~= nil and data.player.Team == LP.Team then
+                skip = true
+            end
+            if not skip then
+                local part = data.char:FindFirstChild(targetPartName)
+                    or data.char:FindFirstChild("Head")
+                    or data.hrp
+                if part then
+                    local sp, on = Camera:WorldToViewportPoint(part.Position)
+                    if on then
+                        local dist   = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                        local distOk = dist < bestDist or (data.isPriority and not foundPriority)
+                        if distOk then
+                            local canHit = true
+                            if useVisCheck then
+                                canHit = CanSee(Camera.CFrame.Position, part.Position, { lpChar, data.char })
+                            end
+                            if canHit then
+                                if data.isPriority and not foundPriority then
+                                    foundPriority = true
+                                    bestDist = dist
+                                    bestChar = data.char
+                                elseif not foundPriority then
+                                    bestDist = dist
+                                    bestChar = data.char
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if bestChar then stickyTarget = bestChar end
+    return bestChar
+end
+
+local function GetSilentTarget()
+    local now = tick()
+    if now - SilentAimCacheTime < 0.016 then return SilentAimCache end
+    SilentAimCacheTime = now
+
+    local fov      = Options.SilentAimFOV and Options.SilentAimFOV.Value or 150
+    local partName = Options.SilentAimPart and Options.SilentAimPart.Value or "Head"
+    local useTeam  = Toggles.SilentAimTeamCheck and Toggles.SilentAimTeamCheck.Value
+    local center   = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local bestDist = fov
+    local closest  = nil
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local wlStatus = GetWLStatus(plr)
+            if wlStatus ~= "neutral" and wlStatus ~= "friend" then
+                local skipTeam = useTeam and LP.Team ~= nil and plr.Team == LP.Team
+                if not skipTeam then
+                    local char = plr.Character
+                    if char then
+                        local part = char:FindFirstChild(partName)
+                            or char:FindFirstChild("Head")
+                            or char:FindFirstChild("HumanoidRootPart")
+                        local hum = char:FindFirstChildOfClass("Humanoid")
+                        if part and hum and hum.Health > 0 then
+                            local sp, on = Camera:WorldToViewportPoint(part.Position)
+                            if on then
+                                local dist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                                if dist < bestDist then
+                                    bestDist = dist
+                                    closest  = part
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    SilentAimCache = closest
+    return closest
+end
+
+local function EnableSilentAim()
+    if SilentAimHook then return end
+    if not hookmetamethod then
+        Library:Notify({ Title = "Silent Aim", Description = "hookmetamethod unavailable.", Time = 4 })
+        return
+    end
+
+    local playerMouse = LP:GetMouse()
+
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(...)
+        local args   = { ... }
+        local self   = args[1]
+        local method = getnamecallmethod()
+        if Toggles.SilentAimEnabled and Toggles.SilentAimEnabled.Value and self == workspace then
+            local target = GetSilentTarget()
+            if target then
+                if method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRay" then
+                    local ray = args[2]
+                    if typeof(ray) == "Ray" then
+                        args[2] = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * ray.Direction.Magnitude)
+                        return oldNamecall(unpack(args))
+                    end
+                elseif method == "FindPartOnRayWithWhitelist" then
+                    local ray = args[2]
+                    if typeof(ray) == "Ray" then
+                        args[2] = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * ray.Direction.Magnitude)
+                        return oldNamecall(unpack(args))
+                    end
+                elseif method == "Raycast" then
+                    if typeof(args[2]) == "Vector3" and typeof(args[3]) == "Vector3" then
+                        args[3] = (target.Position - args[2]).Unit * args[3].Magnitude
+                        return oldNamecall(unpack(args))
+                    end
+                end
+            end
+        end
+        return oldNamecall(unpack(args))
+    end)
+    SilentAimHook = oldNamecall
+
+    local oldIndex
+    oldIndex = hookmetamethod(game, "__index", function(t, k)
+        if Toggles.SilentAimEnabled and Toggles.SilentAimEnabled.Value and t == playerMouse then
+            local target = GetSilentTarget()
+            if target then
+                if k == "Target" then return target end
+                if k == "Hit"    then return CFrame.new(target.Position) end
+            end
+        end
+        return oldIndex(t, k)
+    end)
+    SilentAimIndexHook = oldIndex
+end
+
+local function SetSilentAimVisible(state)
+    for _, el in ipairs(SilentAimElements) do
+        pcall(function() el:SetVisible(state) end)
+    end
+end
+
+local function StopFly()
+    if FlyConnection then FlyConnection:Disconnect() FlyConnection = nil end
+    if FlyBodyVel    then FlyBodyVel:Destroy()       FlyBodyVel    = nil end
+    if FlyBodyGyro   then FlyBodyGyro:Destroy()      FlyBodyGyro   = nil end
+    local hrp = GetHRP()
+    if hrp then hrp.AssemblyLinearVelocity = Vector3.zero end
+end
+
+local function StartFly()
+    StopFly()
+    local hrp = GetHRP()
+    if not hrp then return end
+    FlyBodyVel            = Instance.new("BodyVelocity")
+    FlyBodyVel.Velocity   = Vector3.zero
+    FlyBodyVel.MaxForce   = Vector3.new(1e9, 1e9, 1e9)
+    FlyBodyVel.P          = 1e4
+    FlyBodyVel.Parent     = hrp
+    FlyBodyGyro           = Instance.new("BodyGyro")
+    FlyBodyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+    FlyBodyGyro.P         = 1e4
+    FlyBodyGyro.D         = 100
+    FlyBodyGyro.CFrame    = hrp.CFrame
+    FlyBodyGyro.Parent    = hrp
+    local currentVel = Vector3.zero
+    FlyConnection = RunService.RenderStepped:Connect(function(dt)
+        if not Toggles.FlyEnabled.Value then StopFly() return end
+        local speed   = Options.FlySpeed.Value
+        local cam     = workspace.CurrentCamera
+        local moveDir = Vector3.zero
+        if UIS:IsKeyDown(Enum.KeyCode.W)         then moveDir = moveDir + cam.CFrame.LookVector  end
+        if UIS:IsKeyDown(Enum.KeyCode.S)         then moveDir = moveDir - cam.CFrame.LookVector  end
+        if UIS:IsKeyDown(Enum.KeyCode.A)         then moveDir = moveDir - cam.CFrame.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.D)         then moveDir = moveDir + cam.CFrame.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.Space)     then moveDir = moveDir + Vector3.new(0, 1, 0)   end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then moveDir = moveDir - Vector3.new(0, 1, 0)   end
+        local targetVel = moveDir.Magnitude > 0 and moveDir.Unit * speed or Vector3.zero
+        currentVel = currentVel:Lerp(targetVel, math.min(dt * 12, 1))
+        FlyBodyVel.Velocity = currentVel
+        FlyBodyGyro.CFrame  = cam.CFrame
+    end)
+end
+
+local function StopNoclip()
+    if NoclipConnection then NoclipConnection:Disconnect() NoclipConnection = nil end
+    if FloatConnection  then FloatConnection:Disconnect()  FloatConnection  = nil end
+    if FloatBody        then FloatBody:Destroy()           FloatBody        = nil end
+    local char = LP.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = true end
+    end
+end
+
+local function StartNoclip()
+    StopNoclip()
+    local floatMode = Toggles.NoclipFloat and Toggles.NoclipFloat.Value
+    local hrp       = GetHRP()
+    local targetY   = hrp and hrp.Position.Y or 0
+
+    if floatMode and hrp then
+        FloatBody = Instance.new("BodyPosition")
+        FloatBody.Position  = Vector3.new(hrp.Position.X, targetY, hrp.Position.Z)
+        FloatBody.MaxForce  = Vector3.new(0, 1e9, 0)
+        FloatBody.P         = 5000
+        FloatBody.D         = 500
+        FloatBody.Parent    = hrp
+    end
+
+    NoclipConnection = RunService.Stepped:Connect(function()
+        if not Toggles.NoclipEnabled.Value then StopNoclip() return end
+        local char = LP.Character
+        if not char then return end
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = false end
+        end
+        if floatMode and FloatBody then
+            local hrpNow = GetHRP()
+            if hrpNow then
+                FloatBody.Position = Vector3.new(hrpNow.Position.X, targetY, hrpNow.Position.Z)
+            end
+        end
+    end)
+end
+
+local function DoWalkfling()
+    if WalkflingCooldown then return end
+    local hum = GetHum()
+    if not hum then return end
+    WalkflingCooldown = true
+    local original = hum.WalkSpeed
+    hum.WalkSpeed = Options.WalkflingSpeed.Value
+    task.wait(Options.WalkflingDuration.Value / 1000)
+    hum.WalkSpeed = original
+    task.wait(0.3)
+    WalkflingCooldown = false
+end
+
+local function SetHitbox(multiplier)
+    local char = LP.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    if multiplier <= 1 then
+        local orig = HitboxOriginalSizes[tostring(LP.UserId)]
+        if orig then hrp.Size = orig end
+        return
+    end
+    if not HitboxOriginalSizes[tostring(LP.UserId)] then
+        HitboxOriginalSizes[tostring(LP.UserId)] = hrp.Size
+    end
+    hrp.Size = HitboxOriginalSizes[tostring(LP.UserId)] * multiplier
+end
+
+local function HookChat()
+    if ChatHooked then return end
+    ChatHooked = true
+    pcall(function()
+        if TextChatService.ChatVersion == Enum.ChatVersion.LegacyChatService then
+            for _, plr in ipairs(Players:GetPlayers()) do
+                plr.Chatted:Connect(function(msg)
+                    if Toggles.ChatSpyEnabled and Toggles.ChatSpyEnabled.Value then
+                        table.insert(ChatMessages, "[" .. plr.Name .. "]: " .. msg)
+                        if #ChatMessages > 50 then table.remove(ChatMessages, 1) end
+                    end
+                end)
+            end
+            Players.PlayerAdded:Connect(function(plr)
+                plr.Chatted:Connect(function(msg)
+                    if Toggles.ChatSpyEnabled and Toggles.ChatSpyEnabled.Value then
+                        table.insert(ChatMessages, "[" .. plr.Name .. "]: " .. msg)
+                        if #ChatMessages > 50 then table.remove(ChatMessages, 1) end
+                    end
+                end)
+            end)
+        else
+            TextChatService.MessageReceived:Connect(function(msg)
+                if Toggles.ChatSpyEnabled and Toggles.ChatSpyEnabled.Value then
+                    local speaker = msg.TextSource and msg.TextSource.Name or "?"
+                    table.insert(ChatMessages, "[" .. speaker .. "]: " .. msg.Text)
+                    if #ChatMessages > 50 then table.remove(ChatMessages, 1) end
+                end
+            end)
+        end
+    end)
+end
+
+local function ScanForNpcFolder()
+    local candidates  = {}
+    local playerChars = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Character then playerChars[plr.Character] = true end
+    end
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child:IsA("Folder") or child:IsA("Model") then
+            for _, desc in ipairs(child:GetDescendants()) do
+                if desc:IsA("Humanoid") and not playerChars[desc.Parent] then
+                    table.insert(candidates, child)
+                    break
+                end
+            end
+        end
+    end
+    return candidates
+end
+
+local function NotifyRisky(featureName)
+    if Toggles.DisableWarnings and Toggles.DisableWarnings.Value then return end
+    Library:Notify({
+        Title       = "⚠ " .. featureName,
+        Description = "Detectable — may result in a permanent ban.",
+        Time        = 5,
+    })
+end
+
+local function UpdateRiskyCount(delta)
+    RiskyActiveCount = math.max(0, RiskyActiveCount + delta)
+    if RiskyCountLabel and RiskyCountLabel.SetText then
+        if RiskyActiveCount > 0 then
+            RiskyCountLabel:SetText("⚠ " .. RiskyActiveCount .. " risky " .. (RiskyActiveCount == 1 and "feature" or "features") .. " active")
+            RiskyCountLabel:SetVisible(true)
+        else
+            RiskyCountLabel:SetVisible(false)
+        end
+    end
+end
+
+local function GlobalKill(state)
+    GlobalKillActive = state
+    if state then
+        if Toggles.AimbotEnabled     then Toggles.AimbotEnabled:SetValue(false)     end
+        if Toggles.SilentAimEnabled  then Toggles.SilentAimEnabled:SetValue(false)  end
+        if Toggles.ESPEnabled        then Toggles.ESPEnabled:SetValue(false)         end
+        if Toggles.TriggerbotEnabled then Toggles.TriggerbotEnabled:SetValue(false)  end
+        if Toggles.FlyEnabled        then Toggles.FlyEnabled:SetValue(false)         end
+        if Toggles.NoclipEnabled     then Toggles.NoclipEnabled:SetValue(false)      end
+        if Toggles.WalkflingEnabled  then Toggles.WalkflingEnabled:SetValue(false)   end
+        if Toggles.LagSwitchEnabled  then Toggles.LagSwitchEnabled:SetValue(false)   end
+        if Toggles.FullbrightEnabled then Toggles.FullbrightEnabled:SetValue(false)  end
+        if Options.WalkSpeed         then Options.WalkSpeed:SetValue(16)              end
+        if Options.JumpPower         then Options.JumpPower:SetValue(50)              end
+        StopFly()
+        StopNoclip()
+        SetHitbox(1)
+        Library:Notify({ Title = "Global Kill", Description = "All features disabled.", Time = 3 })
+    end
+end
+
+local ShowRiskyDialog
+
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Filled       = false
+FOVCircle.Color        = Color3.fromRGB(255, 255, 255)
+FOVCircle.Thickness    = 0.8
+FOVCircle.Transparency = 0.2
+FOVCircle.NumSides     = 64
+FOVCircle.Visible      = false
+
+local HMLines = {}
+for i = 1, 4 do
+    local l = Drawing.new("Line")
+    l.Visible      = false
+    l.Transparency = 1
+    HMLines[i] = l
+end
+
+local hitMarkerActive = false
+local hitMarkerTimer  = 0
+
+local function DrawHM()
+    local cx = Camera.ViewportSize.X / 2
+    local cy = Camera.ViewportSize.Y / 2
+    local s  = Options.HitMarkerSize and Options.HitMarkerSize.Value or 8
+    local pts = {
+        { HMLines[1], cx-s, cy,   cx-3, cy   },
+        { HMLines[2], cx+3, cy,   cx+s, cy   },
+        { HMLines[3], cx,   cy-s, cx,   cy-3 },
+        { HMLines[4], cx,   cy+3, cx,   cy+s },
+    }
+    for _, p in ipairs(pts) do
+        p[1].Visible      = true
+        p[1].From         = Vector2.new(p[2], p[3])
+        p[1].To           = Vector2.new(p[4], p[5])
+        p[1].Color        = Color3.fromRGB(255, 255, 255)
+        p[1].Thickness    = 1.5
+        p[1].Transparency = 1
+    end
+end
+
+local function HideHM()
+    for _, l in ipairs(HMLines) do l.Visible = false end
+end
+
+local function CleanupESP(entity)
+    if not espObjects[entity] then return end
+    for _, d in pairs(espObjects[entity]) do
+        if d and typeof(d) == "userdata" and d.__OBJECT_EXISTS then d:Remove() end
+    end
+    espObjects[entity] = nil
+end
+
+local function CleanupAllESP()
+    for entity in pairs(espObjects) do CleanupESP(entity) end
+end
+
+local function NewLine()
+    local l = Drawing.new("Line")
+    l.Visible      = false
+    l.Transparency = 1
+    return l
+end
+
+local function MakeESP(char)
+    local joints    = GetJoints(char)
+    local skelLines = {}
+    for i = 1, #joints do skelLines[i] = NewLine() end
+    espObjects[char] = {
+        Box          = Drawing.new("Square"),
+        BoxFill      = Drawing.new("Square"),
+        CTL1=NewLine(), CTL2=NewLine(), CTR1=NewLine(), CTR2=NewLine(),
+        CBL1=NewLine(), CBL2=NewLine(), CBR1=NewLine(), CBR2=NewLine(),
+        Tracer       = NewLine(),
+        NameText     = Drawing.new("Text"),
+        DistText     = Drawing.new("Text"),
+        HPBarBG      = Drawing.new("Square"),
+        HPBar        = Drawing.new("Square"),
+        HPText       = Drawing.new("Text"),
+        TargetCircle = Drawing.new("Circle"),
+        SkelLines    = skelLines,
+        ArrowLines   = { NewLine(), NewLine(), NewLine() },
+        FriendTag    = Drawing.new("Text"),
+    }
+end
+
+local function DrawCorner(esp, x, y, w, h, col, thick)
+    local cL = math.floor(math.min(w, h) * 0.22)
+    local pts = {
+        {esp.CTL1,x,y,x+cL,y},    {esp.CTL2,x,y,x,y+cL},
+        {esp.CTR1,x+w,y,x+w-cL,y},{esp.CTR2,x+w,y,x+w,y+cL},
+        {esp.CBL1,x,y+h,x+cL,y+h},{esp.CBL2,x,y+h,x,y+h-cL},
+        {esp.CBR1,x+w,y+h,x+w-cL,y+h},{esp.CBR2,x+w,y+h,x+w,y+h-cL},
+    }
+    for _, p in ipairs(pts) do
+        if p[1].__OBJECT_EXISTS then
+            p[1].Visible      = true
+            p[1].From         = Vector2.new(p[2], p[3])
+            p[1].To           = Vector2.new(p[4], p[5])
+            p[1].Color        = col
+            p[1].Thickness    = thick
+            p[1].Transparency = 1
+        end
+    end
+end
+
+local function HideCorner(esp)
+    for _, k in ipairs({"CTL1","CTL2","CTR1","CTR2","CBL1","CBL2","CBR1","CBR2"}) do
+        if esp[k] and esp[k].__OBJECT_EXISTS then esp[k].Visible = false end
+    end
+end
+
+local function DrawArrow(lines, sp, col)
+    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    local dir    = (sp - center).Unit
+    local tip    = center + dir * 65
+    local perp   = Vector2.new(-dir.Y, dir.X)
+    local b1     = tip - dir*6 + perp*3
+    local b2     = tip - dir*6 - perp*3
+    local pts    = {{lines[1],tip,b1},{lines[2],tip,b2},{lines[3],b1,b2}}
+    for _, p in ipairs(pts) do
+        if p[1].__OBJECT_EXISTS then
+            p[1].Visible      = true
+            p[1].From         = p[2]
+            p[1].To           = p[3]
+            p[1].Color        = col
+            p[1].Thickness    = 1.2
+            p[1].Transparency = 0.75
+        end
+    end
+end
+
+local function HideAllESP()
+    for _, esp in pairs(espObjects) do
+        local function h(k) if esp[k] and esp[k].__OBJECT_EXISTS then esp[k].Visible = false end end
+        h("Box") h("BoxFill") h("Tracer") h("NameText") h("DistText")
+        h("HPBarBG") h("HPBar") h("HPText") h("TargetCircle") h("FriendTag")
+        HideCorner(esp)
+        for _, l in ipairs(esp.SkelLines)  do if l.__OBJECT_EXISTS then l.Visible = false end end
+        for _, l in ipairs(esp.ArrowLines) do if l.__OBJECT_EXISTS then l.Visible = false end end
+    end
+end
+
+local function HookHealth(char)
+    local hum = char:WaitForChild("Humanoid")
+    Library:GiveSignal(hum.HealthChanged:Connect(function(hp)
+        if Toggles.HitMarkerEnabled and Toggles.HitMarkerEnabled.Value and hp < hum.MaxHealth then
+            hitMarkerActive = true
+            hitMarkerTimer  = Options.HitMarkerDuration and Options.HitMarkerDuration.Value / 1000 or 0.1
+        end
+    end))
+end
+
+if LP.Character then HookHealth(LP.Character) end
+Library:GiveSignal(LP.CharacterAdded:Connect(function(char)
+    HookHealth(char)
+    stickyTarget    = nil
+    entityCache     = {}
+    entityCacheTime = 0
+    SetHitbox(Options.HitboxMultiplier and Options.HitboxMultiplier.Value or 1)
+    if Toggles.FlyEnabled    and Toggles.FlyEnabled.Value    then task.wait(0.5) StartFly()    end
+    if Toggles.NoclipEnabled and Toggles.NoclipEnabled.Value then task.wait(0.5) StartNoclip() end
+end))
+
+Library:GiveSignal(RunService.RenderStepped:Connect(function(dt)
+    if Library.Toggled or GlobalKillActive then
+        HideAllESP()
+        FOVCircle.Visible = false
+        HideHM()
+        return
+    end
+
+    espFrameCount = espFrameCount + 1
+    visFrameCount = visFrameCount + 1
+
+    local vp     = Camera.ViewportSize
+    local center = Vector2.new(vp.X / 2, vp.Y / 2)
+
+    if hitMarkerActive then
+        hitMarkerTimer = hitMarkerTimer - dt
+        DrawHM()
+        if hitMarkerTimer <= 0 then hitMarkerActive = false HideHM() end
+    end
+
+    local aimbotOn = Toggles.AimbotEnabled and Toggles.AimbotEnabled.Value
+    if aimbotOn then
+        FOVCircle.Visible  = Toggles.AimbotShowFOV and Toggles.AimbotShowFOV.Value or false
+        FOVCircle.Radius   = Options.AimbotFOV and Options.AimbotFOV.Value or 120
+        FOVCircle.Position = center
+        local target = GetAimbotTarget()
+        if target then
+            local partName = Options.AimbotTargetPart and Options.AimbotTargetPart.Value or "Head"
+            local part = target:FindFirstChild(partName) or target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart")
+            if part then
+                local useRage = Toggles.AimbotRage and Toggles.AimbotRage.Value
+                if useRage then
+                    Camera.CFrame = CFrame.new(Camera.CFrame.Position, part.Position)
+                else
+                    local smooth = Options.AimbotSmoothing and Options.AimbotSmoothing.Value or 8
+                    Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, part.Position), math.min(dt * smooth, 1))
+                end
+            end
+        end
+    else
+        FOVCircle.Visible = false
+    end
+
+    if Toggles.TriggerbotEnabled and Toggles.TriggerbotEnabled.Value then
+        local mouse  = LP:GetMouse()
+        local target = mouse.Target
+        if target then
+            local targetChar = Players:GetPlayerFromCharacter(target.Parent)
+            if targetChar and targetChar ~= LP then
+                local minDelay = Options.TriggerbotMinDelay and Options.TriggerbotMinDelay.Value or 50
+                local maxDelay = Options.TriggerbotMaxDelay and Options.TriggerbotMaxDelay.Value or 120
+                local delay    = math.random(minDelay, maxDelay) / 1000
+                task.delay(delay, function()
+                    if Toggles.TriggerbotEnabled and Toggles.TriggerbotEnabled.Value then
+                        mouse:Button1Down()
+                        task.wait(0.05)
+                        mouse:Button1Up()
+                    end
+                end)
+            end
+        end
+    end
+
+    if espFrameCount < 2 then return end
+    espFrameCount = 0
+
+    local espOn  = Toggles.ESPEnabled and Toggles.ESPEnabled.Value
+    local lpChar = LP.Character
+    local lpHRP  = lpChar and lpChar:FindFirstChild("HumanoidRootPart")
+    local valid  = {}
+
+    for _, data in ipairs(GetEntities()) do
+        local char     = data.char
+        local hum      = data.hum
+        local hrp      = data.hrp
+        local plr      = data.player
+        local isFriend = data.isFriend
+        local isBot    = data.isBot or false
+
+        if char and char.Parent and hrp then
+            local maxDist = isBot
+                and (Options.BotESPMaxDistance and Options.BotESPMaxDistance.Value or 500)
+                or  (Options.ESPMaxDistance    and Options.ESPMaxDistance.Value    or 1000)
+
+            if not lpHRP or (lpHRP.Position - hrp.Position).Magnitude <= maxDist then
+                local showESP = isBot
+                    and (Toggles.BotESPEnabled and Toggles.BotESPEnabled.Value)
+                    or  (espOn and not isBot)
+
+                if showESP then
+                    local skipTeamESP = not isBot and Toggles.ESPTeamCheck and Toggles.ESPTeamCheck.Value
+                        and plr and LP.Team ~= nil and plr.Team == LP.Team
+
+                    if not skipTeamESP then
+                        local hrpSP, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+                        if not espObjects[char] then MakeESP(char) end
+                        local esp = espObjects[char]
+
+                        local function hideAll()
+                            local function h(k) if esp[k] and esp[k].__OBJECT_EXISTS then esp[k].Visible = false end end
+                            h("Box") h("BoxFill") h("Tracer") h("NameText") h("DistText")
+                            h("HPBarBG") h("HPBar") h("HPText") h("TargetCircle") h("FriendTag")
+                            HideCorner(esp)
+                            for _, l in ipairs(esp.SkelLines) do if l.__OBJECT_EXISTS then l.Visible = false end end
+                        end
+
+                        if not onScreen then
+                            hideAll()
+                            if not isBot and Toggles.ESPOffScreenArrows and Toggles.ESPOffScreenArrows.Value then
+                                local col = isFriend and Color3.fromRGB(100, 180, 255) or SafeColor(Options.ESPBoxColor and Options.ESPBoxColor.Value)
+                                DrawArrow(esp.ArrowLines, Vector2.new(math.clamp(hrpSP.X,40,vp.X-40), math.clamp(hrpSP.Y,40,vp.Y-40)), col)
+                            else
+                                for _, l in ipairs(esp.ArrowLines) do if l.__OBJECT_EXISTS then l.Visible = false end end
+                            end
+                        else
+                            for _, l in ipairs(esp.ArrowLines) do if l.__OBJECT_EXISTS then l.Visible = false end end
+
+                            local drawOk = true
+                            if not isBot and Toggles.ESPVisibleOnly and Toggles.ESPVisibleOnly.Value then
+                                if visFrameCount >= 4 then
+                                    visCache[char] = CanSee(Camera.CFrame.Position, hrp.Position, { lpChar, char })
+                                end
+                                if not visCache[char] then drawOk = false end
+                            end
+
+                            if not drawOk then
+                                hideAll()
+                            else
+                                valid[char] = true
+                                local topWorld, botWorld, midWorld = GetModelBounds(char)
+                                local topSP, topOn = Camera:WorldToViewportPoint(topWorld)
+                                local botSP, botOn = Camera:WorldToViewportPoint(botWorld)
+                                local midSP, _     = Camera:WorldToViewportPoint(midWorld)
+
+                                if not topOn or not botOn then
+                                    hideAll()
+                                else
+                                    local boxH  = math.abs(botSP.Y - topSP.Y)
+                                    local boxW  = math.max(boxH / 2.2, 20)
+                                    local boxX  = midSP.X - boxW / 2
+                                    local boxY  = math.min(topSP.Y, botSP.Y)
+                                    local hpPct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+
+                                    local col
+                                    if isFriend then
+                                        col = Color3.fromRGB(100, 180, 255)
+                                    elseif isBot then
+                                        col = Color3.fromRGB(186, 85, 211)
+                                    else
+                                        col = SafeColor(Options.ESPBoxColor and Options.ESPBoxColor.Value)
+                                    end
+
+                                    if Toggles.ESPBoxFilled and Toggles.ESPBoxFilled.Value and esp.BoxFill.__OBJECT_EXISTS then
+                                        esp.BoxFill.Visible      = true
+                                        esp.BoxFill.Size         = Vector2.new(boxW, boxH)
+                                        esp.BoxFill.Position     = Vector2.new(boxX, boxY)
+                                        esp.BoxFill.Color        = col
+                                        esp.BoxFill.Filled       = true
+                                        esp.BoxFill.Transparency = Options.ESPBoxFillAlpha and Options.ESPBoxFillAlpha.Value / 100 or 0.06
+                                    else
+                                        if esp.BoxFill.__OBJECT_EXISTS then esp.BoxFill.Visible = false end
+                                    end
+
+                                    local boxStyle = Options.ESPBoxType and Options.ESPBoxType.Value or "Corner"
+                                    if Toggles.ESPBox and Toggles.ESPBox.Value then
+                                        if boxStyle == "Corner" then
+                                            if esp.Box.__OBJECT_EXISTS then esp.Box.Visible = false end
+                                            DrawCorner(esp, boxX, boxY, boxW, boxH, col, 1.2)
+                                        else
+                                            HideCorner(esp)
+                                            if esp.Box.__OBJECT_EXISTS then
+                                                esp.Box.Visible      = true
+                                                esp.Box.Size         = Vector2.new(boxW, boxH)
+                                                esp.Box.Position     = Vector2.new(boxX, boxY)
+                                                esp.Box.Color        = col
+                                                esp.Box.Thickness    = 1.2
+                                                esp.Box.Filled       = false
+                                                esp.Box.Transparency = 1
+                                            end
+                                        end
+                                    else
+                                        if esp.Box.__OBJECT_EXISTS then esp.Box.Visible = false end
+                                        HideCorner(esp)
+                                    end
+
+                                    if not isBot and Toggles.ESPTracer and Toggles.ESPTracer.Value and esp.Tracer.__OBJECT_EXISTS then
+                                        local tracerCol = SafeColor(Options.ESPTracerColor and Options.ESPTracerColor.Value, col)
+                                        local origin = (Options.ESPTracerOrigin and Options.ESPTracerOrigin.Value == "Bottom")
+                                            and Vector2.new(vp.X/2, vp.Y) or center
+                                        esp.Tracer.Visible      = true
+                                        esp.Tracer.From         = origin
+                                        esp.Tracer.To           = Vector2.new(midSP.X, botSP.Y)
+                                        esp.Tracer.Color        = tracerCol
+                                        esp.Tracer.Thickness    = 0.8
+                                        esp.Tracer.Transparency = 0.7
+                                    else
+                                        if esp.Tracer.__OBJECT_EXISTS then esp.Tracer.Visible = false end
+                                    end
+
+                                    if isFriend and esp.FriendTag.__OBJECT_EXISTS then
+                                        esp.FriendTag.Visible      = true
+                                        esp.FriendTag.Text         = "[FRIEND] " .. (plr and plr.Name or "?")
+                                        esp.FriendTag.Position     = Vector2.new(midSP.X, boxY - 14)
+                                        esp.FriendTag.Color        = Color3.fromRGB(180, 230, 255)
+                                        esp.FriendTag.Size         = 12
+                                        esp.FriendTag.Center       = true
+                                        esp.FriendTag.Outline      = true
+                                        esp.FriendTag.Transparency = 1
+                                        if esp.NameText.__OBJECT_EXISTS then esp.NameText.Visible = false end
+                                    elseif Toggles.ESPName and Toggles.ESPName.Value and esp.NameText.__OBJECT_EXISTS then
+                                        esp.FriendTag.Visible      = false
+                                        esp.NameText.Visible       = true
+                                        esp.NameText.Text          = plr and plr.Name or char.Name
+                                        esp.NameText.Position      = Vector2.new(midSP.X, boxY - 13)
+                                        esp.NameText.Color         = Color3.fromRGB(255, 255, 255)
+                                        esp.NameText.Size          = 12
+                                        esp.NameText.Center        = true
+                                        esp.NameText.Outline       = true
+                                        esp.NameText.Transparency  = 1
+                                    else
+                                        if esp.NameText.__OBJECT_EXISTS  then esp.NameText.Visible  = false end
+                                        if esp.FriendTag.__OBJECT_EXISTS then esp.FriendTag.Visible = false end
+                                    end
+
+                                    if Toggles.ESPDistance and Toggles.ESPDistance.Value and lpHRP and esp.DistText.__OBJECT_EXISTS then
+                                        local dist = (lpHRP.Position - hrp.Position).Magnitude
+                                        esp.DistText.Visible      = true
+                                        esp.DistText.Text         = string.format("%.0fm", dist)
+                                        esp.DistText.Position     = Vector2.new(midSP.X, boxY + boxH + 2)
+                                        esp.DistText.Color        = Color3.fromRGB(160, 210, 255)
+                                        esp.DistText.Size         = 10
+                                        esp.DistText.Center       = true
+                                        esp.DistText.Outline      = true
+                                        esp.DistText.Transparency = 1
+                                    else
+                                        if esp.DistText.__OBJECT_EXISTS then esp.DistText.Visible = false end
+                                    end
+
+                                    local barThick = 3
+                                    local barX     = boxX - barThick - 3
+                                    local fillH    = math.max(2, boxH * hpPct)
+                                    local deadFade = hpPct <= 0 and 0 or 1
+
+                                    if Toggles.ESPHealthBar and Toggles.ESPHealthBar.Value then
+                                        if esp.HPBarBG.__OBJECT_EXISTS then
+                                            esp.HPBarBG.Visible      = true
+                                            esp.HPBarBG.Size         = Vector2.new(barThick, boxH)
+                                            esp.HPBarBG.Position     = Vector2.new(barX, boxY)
+                                            esp.HPBarBG.Color        = Color3.fromRGB(15, 15, 15)
+                                            esp.HPBarBG.Filled       = true
+                                            esp.HPBarBG.Transparency = 1
+                                        end
+                                        if esp.HPBar.__OBJECT_EXISTS then
+                                            esp.HPBar.Visible      = true
+                                            esp.HPBar.Size         = Vector2.new(barThick, fillH)
+                                            esp.HPBar.Position     = Vector2.new(barX, boxY + boxH - fillH)
+                                            esp.HPBar.Color        = HPColor(hpPct)
+                                            esp.HPBar.Filled       = true
+                                            esp.HPBar.Transparency = deadFade
+                                        end
+                                        if Toggles.ESPHealthNumerical and Toggles.ESPHealthNumerical.Value and esp.HPText.__OBJECT_EXISTS then
+                                            esp.HPText.Visible      = true
+                                            esp.HPText.Text         = math.floor(hum.Health) .. "hp"
+                                            esp.HPText.Position     = Vector2.new(barX - 1, boxY + boxH/2 - 5)
+                                            esp.HPText.Color        = Color3.fromRGB(255, 255, 255)
+                                            esp.HPText.Size         = 10
+                                            esp.HPText.Center       = true
+                                            esp.HPText.Outline      = true
+                                            esp.HPText.Transparency = 1
+                                        else
+                                            if esp.HPText.__OBJECT_EXISTS then esp.HPText.Visible = false end
+                                        end
+                                    else
+                                        if esp.HPBarBG.__OBJECT_EXISTS then esp.HPBarBG.Visible = false end
+                                        if esp.HPBar.__OBJECT_EXISTS   then esp.HPBar.Visible   = false end
+                                        if esp.HPText.__OBJECT_EXISTS  then esp.HPText.Visible  = false end
+                                    end
+
+                                    if Toggles.ESPSkeleton and Toggles.ESPSkeleton.Value then
+                                        local joints   = GetJoints(char)
+                                        local upperCol = SafeColor(Options.ESPSkelUpperColor and Options.ESPSkelUpperColor.Value, Color3.fromRGB(220,220,220))
+                                        local lowerCol = SafeColor(Options.ESPSkelLowerColor and Options.ESPSkelLowerColor.Value, Color3.fromRGB(180,180,255))
+                                        local count    = math.min(#joints, #esp.SkelLines)
+                                        for i = 1, count do
+                                            local joint = joints[i]
+                                            local pA    = char:FindFirstChild(joint[1])
+                                            local pB    = char:FindFirstChild(joint[2])
+                                            local ln    = esp.SkelLines[i]
+                                            if pA and pB and ln.__OBJECT_EXISTS then
+                                                local sA, onA = Camera:WorldToViewportPoint(pA.Position)
+                                                local sB, onB = Camera:WorldToViewportPoint(pB.Position)
+                                                if onA and onB then
+                                                    ln.Visible      = true
+                                                    ln.From         = Vector2.new(sA.X, sA.Y)
+                                                    ln.To           = Vector2.new(sB.X, sB.Y)
+                                                    ln.Color        = joint[3] == "upper" and upperCol or lowerCol
+                                                    ln.Thickness    = 0.8
+                                                    ln.Transparency = 0.85
+                                                else
+                                                    ln.Visible = false
+                                                end
+                                            else
+                                                if ln.__OBJECT_EXISTS then ln.Visible = false end
+                                            end
+                                        end
+                                        for i = count+1, #esp.SkelLines do
+                                            if esp.SkelLines[i].__OBJECT_EXISTS then esp.SkelLines[i].Visible = false end
+                                        end
+                                    else
+                                        for _, l in ipairs(esp.SkelLines) do if l.__OBJECT_EXISTS then l.Visible = false end end
+                                    end
+
+                                    local isLocked = stickyTarget == char
+                                    if Toggles.ESPTargetCircle and Toggles.ESPTargetCircle.Value and isLocked and esp.TargetCircle.__OBJECT_EXISTS then
+                                        local head    = char:FindFirstChild("Head")
+                                        local headPos = head and head.Position or topWorld
+                                        local hSP, hOn = Camera:WorldToViewportPoint(headPos)
+                                        if hOn then
+                                            esp.TargetCircle.Visible      = true
+                                            esp.TargetCircle.Position     = Vector2.new(hSP.X, hSP.Y)
+                                            esp.TargetCircle.Radius       = Options.ESPTargetCircleRadius and Options.ESPTargetCircleRadius.Value or 14
+                                            esp.TargetCircle.Color        = Color3.fromRGB(255, 200, 0)
+                                            esp.TargetCircle.Filled       = false
+                                            esp.TargetCircle.Thickness    = 1.2
+                                            esp.TargetCircle.Transparency = 0.85
+                                            esp.TargetCircle.NumSides     = 32
+                                        else
+                                            esp.TargetCircle.Visible = false
+                                        end
+                                    else
+                                        if esp.TargetCircle.__OBJECT_EXISTS then esp.TargetCircle.Visible = false end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    visFrameCount = visFrameCount >= 4 and 0 or visFrameCount
+
+    for entity in pairs(espObjects) do
+        if not valid[entity] or not entity.Parent then CleanupESP(entity) end
+    end
+end))
+
+Library:OnUnload(function()
+    StopFly()
+    StopNoclip()
+    SetHitbox(1)
+    CleanupAllESP()
+    if LiveInfoConn then LiveInfoConn:Disconnect() end
+    for _, l in ipairs(HMLines) do if l.__OBJECT_EXISTS then l:Remove() end end
+    if FOVCircle.__OBJECT_EXISTS then FOVCircle:Remove() end
+    local hrp = GetHRP()
+    if hrp then hrp.Anchored = false end
+end)
+
+SetStatus("Building UI...", 0.85)
+
+local Window = Library:CreateWindow({
+    Title            = "My Script",
+    Footer           = "v2.0",
+    Center           = true,
+    AutoShow         = true,
+    ShowCustomCursor = true,
+    ToggleKeybind    = Enum.KeyCode.RightControl,
+})
+
+ShowRiskyDialog = function(featureName, onConfirm, onCancel)
+    if Toggles.DisableWarnings and Toggles.DisableWarnings.Value then
+        onConfirm()
+        return
+    end
+    Window:AddDialog("risky_" .. featureName:lower():gsub(" ", "_"), {
+        Title               = "⚠ " .. featureName:upper(),
+        Description         = "This feature is detectable and may result in a permanent ban. Enable anyway?",
+        AutoDismiss         = true,
+        OutsideClickDismiss = true,
+        FooterButtons = {
+            Cancel = {
+                Title    = "Cancel",
+                Variant  = "Ghost",
+                Order    = 1,
+                Callback = function() onCancel() end,
+            },
+            Confirm = {
+                Title    = "Enable",
+                Variant  = "Destructive",
+                WaitTime = 2,
+                Order    = 2,
+                Callback = function() onConfirm() end,
+            },
+        },
+    })
+end
+
+local Tabs = {
+    Combat    = Window:AddTab("Combat",    "sword"   ),
+    Visuals   = Window:AddTab("Visuals",   "eye"     ),
+    Misc      = Window:AddTab("Misc",      "zap"     ),
+    Whitelist = Window:AddTab("Whitelist", "shield"  ),
+    Settings  = Window:AddTab("Settings",  "settings"),
+}
+
+local CombatLeft  = Tabs.Combat:AddLeftGroupbox("Aimbot")
+local CombatRight = Tabs.Combat:AddRightGroupbox("Silent Aim")
+
+local AimbotTabbox = CombatLeft:AddTabbox()
+local FFATab       = AimbotTabbox:AddTab("FFA")
+local PVPTab       = AimbotTabbox:AddTab("PVP")
+
+local AimbotEnabledToggle = FFATab:AddToggle("AimbotEnabled", { Text = "Enable Aimbot", Default = false })
+AimbotEnabledToggle:AddKeyPicker("AimbotHotkey", {
+    Text     = "Toggle Key",
+    Default  = "None",
+    Mode     = "Toggle",
+    Callback = function()
+        if Toggles.AimbotEnabled then Toggles.AimbotEnabled:SetValue(not Toggles.AimbotEnabled.Value) end
+    end,
+})
+FFATab:AddDropdown("AimbotTargetPart", { Text = "Target Part",     Values = { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" }, Default = 1 })
+FFATab:AddSlider("AimbotFOV",          { Text = "FOV",             Default = 120, Min = 10, Max = 500, Rounding = 0, Suffix = "px" })
+FFATab:AddSlider("AimbotSmoothing",    { Text = "Smoothing",       Default = 8,   Min = 1,  Max = 50,  Rounding = 1 })
+FFATab:AddToggle("AimbotVisibleCheck", { Text = "Visible Check",   Default = false })
+FFATab:AddToggle("AimbotTeamCheck",    { Text = "Team Check",      Default = false })
+FFATab:AddToggle("AimbotShowFOV",      { Text = "Show FOV Circle", Default = false })
+FFATab:AddToggle("AimbotRage",         { Text = "⚠ Rage Mode",    Default = false, Tooltip = "Instant lock, no smoothing" })
+
+PVPTab:AddToggle("PVPEnabled",   { Text = "Enable PVP Mode", Default = false, Tooltip = "Copies aimbot settings but respects team check" })
+PVPTab:AddSlider("PVPSmoothing", { Text = "PVP Smoothing",   Default = 5,   Min = 1,  Max = 50,  Rounding = 1 })
+PVPTab:AddSlider("PVPFOV",       { Text = "PVP FOV",         Default = 100, Min = 10, Max = 500, Rounding = 0, Suffix = "px" })
+PVPTab:AddToggle("PVPTeamCheck", { Text = "Team Check",      Default = true })
+
+local CombatLeft2  = Tabs.Combat:AddLeftGroupbox("Triggerbot")
+local CombatRight2 = Tabs.Combat:AddRightGroupbox("Hitbox")
+
+CombatLeft2:AddToggle("TriggerbotEnabled",  { Text = "⚠ Enable Triggerbot", Default = false })
+CombatLeft2:AddSlider("TriggerbotMinDelay", { Text = "Min Delay",            Default = 50,  Min = 0, Max = 500, Rounding = 0, Suffix = "ms" })
+CombatLeft2:AddSlider("TriggerbotMaxDelay", { Text = "Max Delay",            Default = 120, Min = 0, Max = 800, Rounding = 0, Suffix = "ms" })
+CombatLeft2:AddToggle("TriggerbotVisCheck", { Text = "Visible Check",        Default = true })
+
+CombatRight2:AddSlider("HitboxMultiplier", { Text = "Hitbox Size", Default = 1, Min = 1, Max = 3,  Rounding = 1, Suffix = "x",
+    Callback = function(v) SetHitbox(v) end })
+CombatRight2:AddSlider("ReachMultiplier",  { Text = "Reach",       Default = 0, Min = 0, Max = 50, Rounding = 0, Suffix = " studs" })
+CombatRight2:AddButton({ Text = "Reset Hitbox", Func = function()
+    SetHitbox(1)
+    if Options.HitboxMultiplier then Options.HitboxMultiplier:SetValue(1) end
+end })
+
+CombatRight:AddButton({ Text = "Executor Compatibility", Func = function()
+    ExecInfoVisible = not ExecInfoVisible
+end })
+CombatRight:AddDivider()
+CombatRight:AddInput("SilentAimKey", {
+    Text        = "Unlock Key",
+    Default     = "",
+    Placeholder = 'Hint: "Thx <3"',
+    Finished    = true,
+    Callback    = function(val)
+        if val == "" and SilentAimUnlocked then
+            Library:Notify({ Title = "Silent Aim", Description = "Key removed — type again to restore.", Time = 5 })
+            SilentAimUnlocked = false
+            SetSilentAimVisible(false)
+            if Toggles.SilentAimEnabled and Toggles.SilentAimEnabled.Value then
+                Toggles.SilentAimEnabled:SetValue(false)
+                UpdateRiskyCount(-1)
+            end
+        elseif val == SILENT_AIM_KEY then
+            SilentAimUnlocked = true
+            SetSilentAimVisible(true)
+            Library:Notify({ Title = "Silent Aim", Description = "Unlocked.", Time = 2 })
+        elseif val ~= "" then
+            Library:Notify({ Title = "Silent Aim", Description = "Wrong key.", Time = 2 })
+        end
+    end,
+})
+
+local SAEnabled = CombatRight:AddToggle("SilentAimEnabled",   { Text = "⚠ Enable Silent Aim", Default = false, Visible = false })
+table.insert(SilentAimElements, SAEnabled)
+local SAPart = CombatRight:AddDropdown("SilentAimPart",       { Text = "Target Part", Values = { "Head", "HumanoidRootPart", "UpperTorso" }, Default = 1, Visible = false })
+table.insert(SilentAimElements, SAPart)
+local SAFOV = CombatRight:AddSlider("SilentAimFOV",           { Text = "FOV", Default = 150, Min = 10, Max = 500, Rounding = 0, Suffix = "px", Visible = false })
+table.insert(SilentAimElements, SAFOV)
+local SATeam = CombatRight:AddToggle("SilentAimTeamCheck",    { Text = "Team Check", Default = false, Visible = false })
+table.insert(SilentAimElements, SATeam)
+
+local VisualsLeft  = Tabs.Visuals:AddLeftGroupbox("ESP")
+local VisualsRight = Tabs.Visuals:AddRightGroupbox("Extras")
+
+local ESPTabbox  = VisualsLeft:AddTabbox()
+local BoxTab     = ESPTabbox:AddTab("Box")
+local HealthTab  = ESPTabbox:AddTab("Health")
+local OverlayTab = ESPTabbox:AddTab("Overlay")
+
+BoxTab:AddToggle("ESPEnabled",    { Text = "Enable ESP", Default = false })
+BoxTab:AddToggle("ESPBox",        { Text = "Box",        Default = false })
+BoxTab:AddDropdown("ESPBoxType",  { Text = "Box Style",  Values = { "Corner", "Full" }, Default = 1 })
+local BCT = BoxTab:AddToggle("_BCT", { Text = "Box Color", Default = false })
+BCT:AddColorPicker("ESPBoxColor", { Title = "Box Color", Default = Color3.fromRGB(255, 50, 50) })
+BoxTab:AddToggle("ESPBoxFilled",   { Text = "Filled Box",   Default = false })
+BoxTab:AddSlider("ESPBoxFillAlpha",{ Text = "Fill Opacity", Default = 6, Min = 1, Max = 40, Rounding = 0, Suffix = "%" })
+BoxTab:AddToggle("ESPName",        { Text = "Name",         Default = false })
+BoxTab:AddToggle("ESPDistance",    { Text = "Distance",     Default = false })
+BoxTab:AddSlider("ESPMaxDistance", { Text = "Max Distance", Default = 1000, Min = 50, Max = 5000, Rounding = 0, Suffix = " studs" })
+BoxTab:AddToggle("ESPTeamCheck",   { Text = "Team Check",   Default = false })
+BoxTab:AddToggle("ESPVisibleOnly", { Text = "Visible Only", Default = false })
+
+HealthTab:AddToggle("ESPHealthBar",       { Text = "Health Bar",     Default = false })
+HealthTab:AddToggle("ESPHealthNumerical", { Text = "Show HP Number", Default = false })
+
+OverlayTab:AddToggle("ESPSkeleton", { Text = "Skeleton", Default = false })
+local UCSkel = OverlayTab:AddToggle("_UCSkel", { Text = "Upper Color", Default = false })
+UCSkel:AddColorPicker("ESPSkelUpperColor", { Title = "Upper Body", Default = Color3.fromRGB(220, 220, 220) })
+local LCSkel = OverlayTab:AddToggle("_LCSkel", { Text = "Lower Color", Default = false })
+LCSkel:AddColorPicker("ESPSkelLowerColor", { Title = "Lower Body", Default = Color3.fromRGB(180, 180, 255) })
+OverlayTab:AddToggle("ESPTracer",         { Text = "Tracer",        Default = false })
+OverlayTab:AddDropdown("ESPTracerOrigin", { Text = "Tracer Origin", Values = { "Bottom", "Crosshair" }, Default = 1 })
+local TCT = OverlayTab:AddToggle("_TCT", { Text = "Tracer Color", Default = false })
+TCT:AddColorPicker("ESPTracerColor", { Title = "Tracer Color", Default = Color3.fromRGB(255, 50, 50) })
+
+VisualsRight:AddToggle("ESPTargetCircle",       { Text = "Target Circle",     Default = false })
+VisualsRight:AddSlider("ESPTargetCircleRadius", { Text = "Circle Radius",     Default = 14,  Min = 6,  Max = 40,  Rounding = 0, Suffix = "px" })
+VisualsRight:AddToggle("ESPOffScreenArrows",    { Text = "Off-Screen Arrows", Default = false })
+VisualsRight:AddToggle("HitMarkerEnabled",      { Text = "Hit Marker",        Default = false })
+VisualsRight:AddSlider("HitMarkerSize",         { Text = "Hit Marker Size",   Default = 8,   Min = 4,  Max = 24,  Rounding = 0, Suffix = "px" })
+VisualsRight:AddSlider("HitMarkerDuration",     { Text = "Hit Marker Time",   Default = 100, Min = 50, Max = 500, Rounding = 0, Suffix = "ms" })
+VisualsRight:AddSlider("CameraFOV",             { Text = "Camera FOV",        Default = 70,  Min = 30, Max = 120, Rounding = 0, Suffix = "°" })
+VisualsRight:AddToggle("RemoveFog",             { Text = "Remove Fog",        Default = false })
+VisualsRight:AddToggle("SkyboxEnabled",         { Text = "Skybox Override",   Default = false })
+VisualsRight:AddDropdown("SkyboxPreset",        { Text = "Preset",            Values = { "Default", "Night", "Sunset", "Space" }, Default = 1 })
+
+local MiscLeft  = Tabs.Misc:AddLeftGroupbox("Player")
+local MiscRight = Tabs.Misc:AddRightGroupbox("Info")
+
+local MiscTab1    = MiscLeft:AddTabbox()
+local MovementTab = MiscTab1:AddTab("Movement")
+local UtilityTab  = MiscTab1:AddTab("Utility")
+
+local MiscTab2      = MiscLeft:AddTabbox()
+local ServerTab     = MiscTab2:AddTab("Server")
+local PlayerListTab = MiscTab2:AddTab("Players")
+
+local InfoTab1      = MiscRight:AddTabbox()
+local PlayerInfoTab = InfoTab1:AddTab("Player")
+local ServerInfoTab = InfoTab1:AddTab("Server")
+
+local InfoTab2   = MiscRight:AddTabbox()
+local ChatSpyTab = InfoTab2:AddTab("Chat")
+
+MovementTab:AddSlider("WalkSpeed", { Text = "Walk Speed", Default = 16, Min = 0, Max = 500, Rounding = 0, Suffix = " WS" })
+MovementTab:AddToggle("WalkSpeedCustom", { Text = "Custom Input", Default = false })
+MovementTab:AddInput("WalkSpeedInput", { Text = "Custom WS", Default = "", Placeholder = "Type a number", Visible = false, Finished = true,
+    Callback = function(v)
+        local n = tonumber(v)
+        if n and Toggles.WalkSpeedCustom and Toggles.WalkSpeedCustom.Value then
+            local hum = GetHum()
+            if hum then hum.WalkSpeed = math.clamp(n, 0, 1000) end
+            Options.WalkSpeed:SetValue(math.clamp(n, 0, 500))
+        end
+    end })
+MovementTab:AddButton({ Text = "Reset Walkspeed", Func = function()
+    Options.WalkSpeed:SetValue(16)
+    local hum = GetHum()
+    if hum then hum.WalkSpeed = 16 end
+    Library:Notify({ Title = "Walkspeed", Description = "Reset to 16.", Time = 2 })
+end })
+MovementTab:AddSlider("JumpPower", { Text = "Jump Power", Default = 50, Min = 0, Max = 500, Rounding = 0, Suffix = " JP" })
+MovementTab:AddToggle("JumpPowerCustom", { Text = "Custom Input", Default = false })
+MovementTab:AddInput("JumpPowerInput", { Text = "Custom JP", Default = "", Placeholder = "Type a number", Visible = false, Finished = true,
+    Callback = function(v)
+        local n = tonumber(v)
+        if n and Toggles.JumpPowerCustom and Toggles.JumpPowerCustom.Value then
+            local hum = GetHum()
+            if hum then hum.JumpPower = math.clamp(n, 0, 1000) end
+            Options.JumpPower:SetValue(math.clamp(n, 0, 500))
+        end
+    end })
+MovementTab:AddToggle("InfiniteJump", { Text = "Infinite Jump", Default = false })
+local FlyToggle = MovementTab:AddToggle("FlyEnabled", { Text = "Fly", Default = false })
+FlyToggle:AddKeyPicker("FlyKeybind", { Text = "Fly Key", Default = "F", Mode = "Toggle" })
+MovementTab:AddSlider("FlySpeed", { Text = "Fly Speed", Default = 50, Min = 5, Max = 300, Rounding = 0, Suffix = " SP" })
+MovementTab:AddToggle("FlySpeedCustom", { Text = "Custom Input", Default = false })
+MovementTab:AddInput("FlySpeedInput", { Text = "Custom Fly Speed", Default = "", Placeholder = "Type a number", Visible = false, Finished = true,
+    Callback = function(v)
+        local n = tonumber(v)
+        if n and Toggles.FlySpeedCustom and Toggles.FlySpeedCustom.Value then
+            Options.FlySpeed:SetValue(math.clamp(n, 1, 2000))
+        end
+    end })
+MovementTab:AddToggle("NoclipEnabled", { Text = "Noclip",     Default = false })
+MovementTab:AddToggle("NoclipFloat",   { Text = "Float Mode", Default = false, Tooltip = "Stays in air regardless of platform" })
+
+UtilityTab:AddToggle("AntiAFK",          { Text = "Anti-AFK",          Default = false })
+UtilityTab:AddToggle("ChatSpyEnabled",   { Text = "Chat Spy",          Default = false })
+UtilityTab:AddToggle("WalkflingEnabled", { Text = "⚠ Walkfling",      Default = false })
+UtilityTab:AddSlider("WalkflingSpeed",   { Text = "Fling Speed",       Default = 500, Min = 100, Max = 2000, Rounding = 0, Suffix = " WS" })
+UtilityTab:AddSlider("WalkflingDuration",{ Text = "Fling Duration",    Default = 100, Min = 50,  Max = 500,  Rounding = 0, Suffix = "ms" })
+UtilityTab:AddButton({ Text = "Fling Now", Func = function() if Toggles.WalkflingEnabled.Value then DoWalkfling() end end })
+UtilityTab:AddToggle("LagSwitchEnabled", { Text = "⚠ Lag Switch [G]", Default = false })
+UtilityTab:AddToggle("FullbrightEnabled",{ Text = "Fullbright",        Default = false })
+
+ServerTab:AddButton({ Text = "Rejoin", Func = function() TeleportService:Teleport(game.PlaceId, LP) end })
+ServerTab:AddButton({ Text = "Copy Job ID", Func = function()
+    setclipboard(game.JobId)
+    Library:Notify({ Title = "Copied", Description = "Job ID copied.", Time = 2 })
+end })
+ServerTab:AddDropdown("ServerHopThreshold", { Text = "Max Players", Values = { "5", "10", "30", "50" }, Default = 2 })
+ServerTab:AddButton({ Text = "Hop Now", Func = function()
+    local threshold = tonumber(Options.ServerHopThreshold.Value) or 10
+    Library:Notify({ Title = "Server Hop", Description = "Searching...", Time = 3 })
+    task.spawn(function()
+        local ok, result = pcall(function()
+            return game:GetService("HttpService"):JSONDecode(
+                game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100")
+            )
+        end)
+        if not ok or not result or not result.data then
+            Library:Notify({ Title = "Server Hop", Description = "Failed to fetch servers.", Time = 4 })
+            return
+        end
+        for _, server in ipairs(result.data) do
+            if server.playing and server.playing < threshold and server.id ~= game.JobId then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, LP)
+                return
+            end
+        end
+        Library:Notify({ Title = "Server Hop", Description = "No suitable server found.", Time = 4 })
+    end)
+end })
+
+PlayerListTab:AddDropdown("PlayerTarget", { Text = "Select Player", SpecialType = "Player", ExcludeLocalPlayer = true })
+PlayerListTab:AddButton({ Text = "Teleport To", Func = function()
+    local plr = FindPlayer(tostring(Options.PlayerTarget and Options.PlayerTarget.Value or ""))
+    if not plr or not plr.Character then
+        Library:Notify({ Title = "Players", Description = "Not found.", Time = 2 }) return
+    end
+    local hrp   = plr.Character:FindFirstChild("HumanoidRootPart")
+    local myHRP = GetHRP()
+    if hrp and myHRP then myHRP.CFrame = hrp.CFrame + Vector3.new(0, 3, 0) end
+end })
+PlayerListTab:AddButton({ Text = "Bring Player", Func = function()
+    local plr = FindPlayer(tostring(Options.PlayerTarget and Options.PlayerTarget.Value or ""))
+    if not plr or not plr.Character then return end
+    local theirHRP = plr.Character:FindFirstChild("HumanoidRootPart")
+    local myHRP    = GetHRP()
+    if theirHRP and myHRP then theirHRP.CFrame = myHRP.CFrame + Vector3.new(2, 0, 0) end
+end })
+
+local function BuildPlayerInfoLabels()
+    for _, field in ipairs({ "Name", "Display", "User ID", "Account Age", "Team", "Health", "Walk Speed", "Position" }) do
+        PlayerLabelRefs[field] = PlayerInfoTab:AddLabel({ Text = field .. ": ...", DoesWrap = false })
+    end
+end
+
+local function BuildServerInfoLabels()
+    for _, field in ipairs({ "Place ID", "Game ID", "Job ID", "Players", "Place Version", "Creator ID", "Private Server" }) do
+        ServerLabelRefs[field] = ServerInfoTab:AddLabel({ Text = field .. ": ...", DoesWrap = false })
+    end
+end
+
+local ChatDisplayLabel = ChatSpyTab:AddLabel({ Text = "No messages yet.", DoesWrap = true })
+
+local function UpdatePlayerInfo()
+    local char = LP.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    local pos  = hrp and hrp.Position or Vector3.zero
+    local data = {
+        ["Name"]        = LP.Name,
+        ["Display"]     = LP.DisplayName,
+        ["User ID"]     = tostring(LP.UserId),
+        ["Account Age"] = LP.AccountAge .. " days",
+        ["Team"]        = LP.Team and LP.Team.Name or "None",
+        ["Health"]      = (hum and math.floor(hum.Health) or "?") .. " / " .. (hum and math.floor(hum.MaxHealth) or "?"),
+        ["Walk Speed"]  = tostring(hum and math.floor(hum.WalkSpeed) or "?"),
+        ["Position"]    = string.format("%.1f, %.1f, %.1f", pos.X, pos.Y, pos.Z),
+    }
+    for field, ref in pairs(PlayerLabelRefs) do
+        if ref and ref.SetText then ref:SetText(field .. ": " .. (data[field] or "?")) end
+    end
+end
+
+local function UpdateServerInfo()
+    local data = {
+        ["Place ID"]       = tostring(game.PlaceId),
+        ["Game ID"]        = tostring(game.GameId),
+        ["Job ID"]         = game.JobId,
+        ["Players"]        = #Players:GetPlayers() .. " / " .. Players.MaxPlayers,
+        ["Place Version"]  = tostring(game.PlaceVersion),
+        ["Creator ID"]     = tostring(game.CreatorId),
+        ["Private Server"] = tostring(game.PrivateServerId ~= ""),
+    }
+    for field, ref in pairs(ServerLabelRefs) do
+        if ref and ref.SetText then ref:SetText(field .. ": " .. (data[field] or "?")) end
+    end
+end
+
+BuildPlayerInfoLabels()
+BuildServerInfoLabels()
+UpdatePlayerInfo()
+UpdateServerInfo()
+
+local infoThrottle = 0
+LiveInfoConn = RunService.Heartbeat:Connect(function(dt)
+    infoThrottle = infoThrottle + dt
+    if infoThrottle >= 0.5 then
+        infoThrottle = 0
+        UpdatePlayerInfo()
+        UpdateServerInfo()
+        if Toggles.ChatSpyEnabled and Toggles.ChatSpyEnabled.Value and #ChatMessages > 0 then
+            if ChatDisplayLabel and ChatDisplayLabel.SetText then
+                ChatDisplayLabel:SetText(table.concat(ChatMessages, "\n"))
+            end
+        end
+    end
+end)
+
+MiscRight:AddButton({ Text = "Force Refresh", Func = function()
+    UpdatePlayerInfo()
+    UpdateServerInfo()
+    Library:Notify({ Title = "Info", Description = "Refreshed.", Time = 1 })
+end })
+
+local WLLeft  = Tabs.Whitelist:AddLeftGroupbox("Player Status")
+local WLRight = Tabs.Whitelist:AddRightGroupbox("Info")
+
+WLLeft:AddLabel({ Text = "Enemy = targeted. Friend = blue ESP, ignored by aimbot.\nNeutral = invisible to all systems.\nPriority = targeted first regardless of FOV.", DoesWrap = true })
+WLLeft:AddDivider()
+WLLeft:AddDropdown("WLPlayerSelect", { Text = "Select Player", SpecialType = "Player", ExcludeLocalPlayer = true })
+WLLeft:AddDropdown("WLStatus",       { Text = "Status", Values = { "Enemy", "Friend", "Neutral" }, Default = 1 })
+WLLeft:AddToggle("WLPriority",       { Text = "Priority Target", Default = false, Tooltip = "Always aimed at first regardless of FOV position" })
+WLLeft:AddButton({ Text = "Apply", Func = function()
+    local plr = FindPlayer(tostring(Options.WLPlayerSelect and Options.WLPlayerSelect.Value or ""))
+    if not plr then
+        Library:Notify({ Title = "Whitelist", Description = "Player not found.", Time = 2 }) return
+    end
+    local status   = (Options.WLStatus and Options.WLStatus.Value or "Enemy"):lower()
+    local priority = Toggles.WLPriority and Toggles.WLPriority.Value or false
+    SetWLStatus(plr, status, priority)
+    entityCache     = {}
+    entityCacheTime = 0
+    Library:Notify({ Title = "Whitelist", Description = plr.Name .. " → " .. status .. (priority and " [PRIORITY]" or "") .. ".", Time = 3 })
+end })
+WLLeft:AddButton({ Text = "Reset All", Func = function()
+    WhitelistData   = {}
+    entityCache     = {}
+    entityCacheTime = 0
+    Library:Notify({ Title = "Whitelist", Description = "All statuses reset.", Time = 2 })
+end })
+
+WLRight:AddLabel({ Text = "Current assignments:", DoesWrap = false })
+WLRight:AddDivider()
+local WLListLabel = WLRight:AddLabel({ Text = "None assigned.", DoesWrap = true })
+
+local function RefreshWLDisplay()
+    local lines = {}
+    for _, data in pairs(WhitelistData) do
+        local icon  = data.status == "friend" and "👤" or data.status == "neutral" and "○" or "✕"
+        local pFlag = data.priority and " [P]" or ""
+        table.insert(lines, icon .. " " .. data.name .. " — " .. data.status .. pFlag)
+    end
+    if WLListLabel and WLListLabel.SetText then
+        WLListLabel:SetText(#lines == 0 and "None assigned." or table.concat(lines, "\n"))
+    end
+end
+
+WLRight:AddButton({ Text = "Refresh List", Func = function() RefreshWLDisplay() end })
+
+local MenuGroup = Tabs.Settings:AddLeftGroupbox("Menu")
+RiskyCountLabel = MenuGroup:AddLabel({ Text = "", DoesWrap = false, Visible = false })
+
+local GlobalKillToggle = MenuGroup:AddToggle("GlobalKill", {
+    Text    = "⚠ Global Kill Switch",
+    Default = false,
+    Tooltip = "Disables all features instantly",
+})
+GlobalKillToggle:OnChanged(function(v) GlobalKill(v) end)
+GlobalKillToggle:AddKeyPicker("GlobalKillKey", {
+    Text     = "Kill Switch Key",
+    Default  = "None",
+    Mode     = "Toggle",
+    Callback = function()
+        if Toggles.GlobalKill then Toggles.GlobalKill:SetValue(not Toggles.GlobalKill.Value) end
+    end,
+})
+
+MenuGroup:AddToggle("KeybindMenuOpen",  { Text = "Show Keybind Menu",      Default = false, Callback = function(v) Library.KeybindFrame.Visible = v end })
+MenuGroup:AddToggle("ShowCustomCursor", { Text = "Custom Cursor",          Default = true,  Callback = function(v) Library.ShowCustomCursor    = v end })
+MenuGroup:AddToggle("DisableWarnings",  { Text = "Disable Risky Warnings", Default = false })
+MenuGroup:AddDropdown("NotificationSide", { Text = "Notification Side", Values = { "Left", "Right" }, Default = 1,
+    Callback = function(v) Library:SetNotifySide(v) end })
+MenuGroup:AddLabel("Menu Keybind"):AddKeyPicker("MenuKeybind", { Default = "RightControl", NoUI = true, Text = "Menu Keybind" })
+Library.ToggleKeybind = Options.MenuKeybind
+MenuGroup:AddButton({ Text = "Unload Script", Func = function()
+    Library:Notify({ Title = "Unloading", Description = "Script stopping...", Time = 2 })
+    task.wait(0.5)
+    Library:Unload()
+end })
+
+local BotGroup = Tabs.Settings:AddRightGroupbox("Bot Features")
+BotGroup:AddLabel({ Text = "Nothing runs until master switch is on.\nAll sources are opt-in.", DoesWrap = true })
+BotGroup:AddDivider()
+
+local BotAimbotTabAdded = false
+local BotESPTabAdded    = false
+
+local BotMasterToggle = BotGroup:AddToggle("BotMasterEnabled", {
+    Text    = "⚠ Enable Bot Features",
+    Default = false,
+    Tooltip = "Master gate — required for all bot functionality",
+})
+
+BotGroup:AddDivider()
+BotGroup:AddDropdown("BotSourceMode", {
+    Text    = "Source Mode",
+    Values  = { "Folder", "Named Models", "Full Workspace" },
+    Default = 1,
+    Callback = function(v)
+        if     v == "Folder"           then NpcSourceMode = "folder"
+        elseif v == "Named Models"     then NpcSourceMode = "models"
+        elseif v == "Full Workspace"   then NpcSourceMode = "all" end
+        entityCache     = {}
+        entityCacheTime = 0
+    end,
+})
+
+BotGroup:AddInput("NpcFolderPath", {
+    Text        = "Folder Name",
+    Default     = "",
+    Placeholder = "e.g. Enemies",
+    Finished    = true,
+    Callback    = function(val)
+        if val == "" then
+            NpcFolder = nil
+            Library:Notify({ Title = "Bot", Description = "Folder cleared.", Time = 2 })
+        else
+            local found = workspace:FindFirstChild(val)
+            if found then
+                NpcFolder = found
+                Library:Notify({ Title = "Bot", Description = "Folder set: " .. val, Time = 3 })
+            else
+                Library:Notify({ Title = "Bot", Description = "Not found: " .. val, Time = 3 })
+            end
+        end
+        entityCache     = {}
+        entityCacheTime = 0
+    end,
+})
+
+BotGroup:AddInput("NpcModelNames", {
+    Text        = "Model Names",
+    Default     = "",
+    Placeholder = "Name1, Name2, Name3",
+    Finished    = true,
+    Callback    = function(val)
+        NpcCustomModels = {}
+        if val ~= "" then
+            for entry in val:gmatch("[^,]+") do
+                local trimmed = entry:match("^%s*(.-)%s*$")
+                if trimmed ~= "" then table.insert(NpcCustomModels, trimmed) end
+            end
+        end
+        entityCache     = {}
+        entityCacheTime = 0
+        Library:Notify({ Title = "Bot", Description = #NpcCustomModels .. " model(s) registered.", Time = 2 })
+    end,
+})
+
+BotGroup:AddButton({ Text = "Scan Workspace", Func = function()
+    local candidates = ScanForNpcFolder()
+    if #candidates == 0 then
+        Library:Notify({ Title = "Bot", Description = "No NPC folders found.", Time = 3 }) return
+    end
+    local names = {}
+    for _, c in ipairs(candidates) do table.insert(names, c.Name) end
+    Library:Notify({ Title = "Bot", Description = "Found: " .. table.concat(names, ", "), Time = 6 })
+end })
+
+BotGroup:AddButton({ Text = "Use First Detected Folder", Func = function()
+    local candidates = ScanForNpcFolder()
+    if #candidates == 0 then
+        Library:Notify({ Title = "Bot", Description = "Nothing detected.", Time = 3 }) return
+    end
+    NpcFolder     = candidates[1]
+    NpcSourceMode = "folder"
+    Options.BotSourceMode:SetValue("Folder")
+    entityCache     = {}
+    entityCacheTime = 0
+    Library:Notify({ Title = "Bot", Description = "Using: " .. NpcFolder.Name, Time = 3 })
+end })
+
+BotMasterToggle:OnChanged(function(state)
+    BotFeaturesEnabled = state
+    entityCache        = {}
+    entityCacheTime    = 0
+    if state then
+        if not BotAimbotTabAdded then
+            BotAimbotTabAdded = true
+            local BotAimTab = AimbotTabbox:AddTab("Bot")
+            BotAimTab:AddToggle("BotAimbotEnabled", { Text = "Enable Bot Aimbot", Default = false })
+            BotAimTab:AddDropdown("BotAimPart",     { Text = "Target Part",       Values = { "HumanoidRootPart","Head","UpperTorso" }, Default = 1 })
+            BotAimTab:AddSlider("BotAimFOV",        { Text = "FOV",               Default = 180, Min=10, Max=500, Rounding=0, Suffix="px" })
+            BotAimTab:AddSlider("BotAimSmoothing",  { Text = "Smoothing",         Default = 5,   Min=1,  Max=100, Rounding=1 })
+        end
+        if not BotESPTabAdded then
+            BotESPTabAdded = true
+            local BotESPTab = ESPTabbox:AddTab("Bot")
+            BotESPTab:AddToggle("BotESPEnabled",     { Text = "Enable Bot ESP", Default = false })
+            BotESPTab:AddToggle("BotESPBox",         { Text = "Box ESP",        Default = false })
+            BotESPTab:AddToggle("BotESPName",        { Text = "Name ESP",       Default = false })
+            BotESPTab:AddToggle("BotESPHealth",      { Text = "Health Bar",     Default = false })
+            BotESPTab:AddToggle("BotESPNumerical",   { Text = "Show HP Number", Default = false })
+            BotESPTab:AddSlider("BotESPMaxDistance", { Text = "Max Distance",   Default = 500, Min=50, Max=3000, Rounding=0, Suffix=" studs" })
+        end
+        Library:Notify({ Title = "Bot Features", Description = "Active. Configure source below.", Time = 3 })
+    else
+        Library:Notify({ Title = "Bot Features", Description = "Disabled.", Time = 2 })
+    end
+end)
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+ThemeManager:SetFolder("MyScript")
+SaveManager:SetFolder("MyScript/configs")
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:BuildConfigSection(Tabs.Settings)
+
+Toggles.TriggerbotEnabled:OnChanged(function(state)
+    if state then
+        ShowRiskyDialog("Triggerbot",
+            function() UpdateRiskyCount(1) NotifyRisky("Triggerbot") end,
+            function() Toggles.TriggerbotEnabled:SetValue(false) end)
+    else UpdateRiskyCount(-1) end
+end)
+
+Toggles.WalkflingEnabled:OnChanged(function(state)
+    if state then
+        ShowRiskyDialog("Walkfling",
+            function() UpdateRiskyCount(1) NotifyRisky("Walkfling") end,
+            function() Toggles.WalkflingEnabled:SetValue(false) end)
+    else UpdateRiskyCount(-1) end
+end)
+
+Toggles.LagSwitchEnabled:OnChanged(function(state)
+    if state then
+        ShowRiskyDialog("Lag Switch",
+            function()
+                UpdateRiskyCount(1)
+                NotifyRisky("Lag Switch")
+                UIS.InputBegan:Connect(function(input)
+                    if input.KeyCode == Enum.KeyCode.G and Toggles.LagSwitchEnabled.Value then
+                        local hrp = GetHRP()
+                        if hrp then hrp.Anchored = true end
+                    end
+                end)
+                UIS.InputEnded:Connect(function(input)
+                    if input.KeyCode == Enum.KeyCode.G then
+                        local hrp = GetHRP()
+                        if hrp then hrp.Anchored = false end
+                    end
+                end)
+            end,
+            function() Toggles.LagSwitchEnabled:SetValue(false) end)
+    else
+        UpdateRiskyCount(-1)
+        local hrp = GetHRP()
+        if hrp then hrp.Anchored = false end
+    end
+end)
+
+Toggles.SilentAimEnabled:OnChanged(function(state)
+    if state then
+        if not SilentAimUnlocked then
+            Toggles.SilentAimEnabled:SetValue(false)
+            Library:Notify({ Title = "Silent Aim", Description = 'Enter the key first. Hint: "Thx <3"', Time = 4 })
+            return
+        end
+        ShowRiskyDialog("Silent Aim",
+            function() UpdateRiskyCount(1) NotifyRisky("Silent Aim") EnableSilentAim() end,
+            function() Toggles.SilentAimEnabled:SetValue(false) end)
+    else UpdateRiskyCount(-1) end
+end)
+
+Toggles.WalkSpeedCustom:OnChanged(function(v)
+    if Options.WalkSpeedInput then Options.WalkSpeedInput:SetVisible(v) end
+end)
+
+Toggles.JumpPowerCustom:OnChanged(function(v)
+    if Options.JumpPowerInput then Options.JumpPowerInput:SetVisible(v) end
+end)
+
+Toggles.FlySpeedCustom:OnChanged(function(v)
+    if Options.FlySpeedInput then Options.FlySpeedInput:SetVisible(v) end
+end)
+
+Options.WalkSpeed:OnChanged(function(value)
+    local hum = GetHum()
+    if hum then hum.WalkSpeed = value end
+end)
+
+Options.JumpPower:OnChanged(function(value)
+    local hum = GetHum()
+    if hum then hum.JumpPower = value end
+end)
+
+Options.CameraFOV:OnChanged(function(value)
+    workspace.CurrentCamera.FieldOfView = value
+end)
+
+Options.HitboxMultiplier:OnChanged(function(value)
+    SetHitbox(value)
+end)
+
+Toggles.FlyEnabled:OnChanged(function(state)
+    if state then StartFly() else StopFly() end
+end)
+
+Toggles.NoclipEnabled:OnChanged(function(state)
+    if state then StartNoclip() else StopNoclip() end
+end)
+
+Toggles.NoclipFloat:OnChanged(function()
+    if Toggles.NoclipEnabled and Toggles.NoclipEnabled.Value then
+        StopNoclip()
+        StartNoclip()
+    end
+end)
+
+Toggles.InfiniteJump:OnChanged(function()
+    Library:GiveSignal(UIS.JumpRequest:Connect(function()
+        if not Toggles.InfiniteJump.Value then return end
+        local hum = GetHum()
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end))
+end)
+
+Toggles.AntiAFK:OnChanged(function(state)
+    if state then
+        task.spawn(function()
+            local vu = game:GetService("VirtualUser")
+            while Toggles.AntiAFK.Value do
+                vu:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                task.wait(0.1)
+                vu:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                task.wait(15)
+            end
+        end)
+    end
+end)
+
+Toggles.ChatSpyEnabled:OnChanged(function(state)
+    if state then
+        HookChat()
+        Library:Notify({ Title = "Chat Spy", Description = "Active.", Time = 2 })
+    end
+end)
+
+Toggles.FullbrightEnabled:OnChanged(function(state)
+    if state then
+        Lighting.Ambient        = Color3.fromRGB(255, 255, 255)
+        Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+        Lighting.Brightness     = 2
+        Lighting.GlobalShadows  = false
+        Lighting.FogEnd         = 1e9
+    else
+        Lighting.Ambient        = DefaultAmbient
+        Lighting.OutdoorAmbient = DefaultOutdoor
+        Lighting.Brightness     = DefaultBrightness
+        Lighting.GlobalShadows  = DefaultShadows
+        Lighting.FogEnd         = DefaultFogEnd
+    end
+end)
+
+Toggles.RemoveFog:OnChanged(function(state)
+    Lighting.FogEnd = state and 1e9 or DefaultFogEnd
+end)
+
+Toggles.SkyboxEnabled:OnChanged(function(state)
+    if not state then return end
+    local preset  = Options.SkyboxPreset.Value
+    local sky     = Lighting:FindFirstChildOfClass("Sky") or Instance.new("Sky", Lighting)
+    local presets = {
+        Night  = { SkyboxBk="rbxassetid://159454286",SkyboxDn="rbxassetid://159454260",SkyboxFt="rbxassetid://159454269",SkyboxLf="rbxassetid://159454293",SkyboxRt="rbxassetid://159454296",SkyboxUp="rbxassetid://159454302" },
+        Sunset = { SkyboxBk="rbxassetid://159454875",SkyboxDn="rbxassetid://159454893",SkyboxFt="rbxassetid://159454882",SkyboxLf="rbxassetid://159454899",SkyboxRt="rbxassetid://159454906",SkyboxUp="rbxassetid://159454912" },
+        Space  = { SkyboxBk="rbxassetid://159455023",SkyboxDn="rbxassetid://159455041",SkyboxFt="rbxassetid://159455031",SkyboxLf="rbxassetid://159455048",SkyboxRt="rbxassetid://159455055",SkyboxUp="rbxassetid://159455062" },
+    }
+    if presets[preset] then
+        for prop, val in pairs(presets[preset]) do sky[prop] = val end
+    end
+end)
+
+SetStatus("Loaded.", 1)
+task.wait(0.4)
+FadeOut()
+SaveManager:LoadAutoloadConfig()
