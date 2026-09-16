@@ -1,0 +1,683 @@
+local Players         = game:GetService("Players")
+local RunService      = game:GetService("RunService")
+local UIS             = game:GetService("UserInputService")
+local LP              = Players.LocalPlayer
+local Camera          = workspace.CurrentCamera
+
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library, ThemeManager, SaveManager
+
+task.spawn(function() Library      = loadstring(game:HttpGet(repo .. "Library.lua"))() end)
+task.spawn(function() ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))() end)
+task.spawn(function() SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))() end)
+
+repeat task.wait() until Library and ThemeManager and SaveManager
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local pvpLockedTarget   = nil
+local pvpLockedUUID     = nil
+local pvpNotifFired     = false
+local ffaLockedTarget   = nil
+local ffaLockedUUID     = nil
+local ffaNotifFired     = false
+
+local entityCache       = {}
+local entityCacheTime   = 0
+local CACHE_TTL         = 0.5
+local frameCount        = 0
+local HitboxOriginalSizes = {}
+local WhitelistData     = {}
+local ActiveHighlights  = {}
+
+local function GetWLStatus(plr)
+    if not plr then return "enemy" end
+    local data = WhitelistData[tostring(plr.UserId)]
+    return data and data.status or "enemy"
+end
+
+local function CanSee(origin, target, ignore)
+    rayParams.FilterDescendantsInstances = ignore
+    return workspace:Raycast(origin, target - origin, rayParams) == nil
+end
+
+local function SetHitbox(multiplier, char)
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local key = tostring(char)
+    if multiplier <= 1 then
+        if HitboxOriginalSizes[key] then hrp.Size = HitboxOriginalSizes[key] end
+        return
+    end
+    if not HitboxOriginalSizes[key] then
+        HitboxOriginalSizes[key] = hrp.Size
+    end
+    hrp.Size = HitboxOriginalSizes[key] * multiplier
+end
+
+local function ResetAllHitboxes()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Character then
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            local key = tostring(plr.Character)
+            if hrp and HitboxOriginalSizes[key] then
+                hrp.Size = HitboxOriginalSizes[key]
+            end
+        end
+    end
+    HitboxOriginalSizes = {}
+end
+
+local function ClearHighlights()
+    for char, hl in pairs(ActiveHighlights) do
+        pcall(function() hl:Destroy() end)
+        ActiveHighlights[char] = nil
+    end
+end
+
+local function SetHighlight(char, active)
+    if not char then return end
+    if active then
+        if ActiveHighlights[char] then return end
+        local hl = Instance.new("SelectionBox")
+        hl.LineThickness       = 0.05
+        hl.Color3              = Color3.fromRGB(255, 80, 80)
+        hl.SurfaceColor3       = Color3.fromRGB(255, 80, 80)
+        hl.SurfaceTransparency = 0.7
+        hl.Adornee             = char
+        hl.Parent              = workspace
+        ActiveHighlights[char] = hl
+    else
+        if ActiveHighlights[char] then
+            pcall(function() ActiveHighlights[char]:Destroy() end)
+            ActiveHighlights[char] = nil
+        end
+    end
+end
+
+local function GetEntities()
+    local now = tick()
+    if now - entityCacheTime < CACHE_TTL then return entityCache end
+    entityCacheTime = now
+    local list = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local status = GetWLStatus(plr)
+            if status ~= "neutral" then
+                local char = plr.Character
+                if char then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    local hrp = char:FindFirstChild("HumanoidRootPart")
+                    if hum and hum.Health > 0 and hrp then
+                        table.insert(list, {
+                            char     = char,
+                            hum      = hum,
+                            hrp      = hrp,
+                            player   = plr,
+                            isFriend = status == "friend",
+                        })
+                    end
+                end
+            end
+        end
+    end
+    entityCache = list
+    return list
+end
+
+local function GetScreenCenter()
+    return Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+end
+
+local function GetPartForName(char, name)
+    return char:FindFirstChild(name)
+        or char:FindFirstChild("Head")
+        or char:FindFirstChild("HumanoidRootPart")
+end
+
+local function PassesHitChance(pct)
+    return math.random(1, 100) <= pct
+end
+
+local function Notify(title, body, duration)
+    Library:Notify({
+        Title       = title,
+        Description = body,
+        Time        = duration or 5,
+    })
+end
+
+local function PvPGetTarget()
+    local lpChar = LP.Character
+    local lpHRP  = lpChar and lpChar:FindFirstChild("HumanoidRootPart")
+    if not lpHRP then return nil end
+
+    local useTeam  = Toggles.PvPTeamCheck and Toggles.PvPTeamCheck.Value
+    local useVis   = Toggles.PvPVisCheck   and Toggles.PvPVisCheck.Value
+    local fov      = Options.PvPFOV        and Options.PvPFOV.Value        or 120
+    local partName = Options.PvPHitPart    and Options.PvPHitPart.Value    or "Head"
+    local priority = Options.PvPPriority   and Options.PvPPriority.Value   or "Closest to Crosshair"
+    local center   = GetScreenCenter()
+
+    if pvpLockedTarget then
+        local hum = pvpLockedTarget:FindFirstChildOfClass("Humanoid")
+        local hrp = pvpLockedTarget:FindFirstChild("HumanoidRootPart")
+        if hum and hum.Health > 0 and hrp and pvpLockedTarget.Parent then
+            return pvpLockedTarget
+        else
+            pvpLockedTarget = nil
+            pvpLockedUUID   = nil
+            pvpNotifFired   = false
+            Notify("PvP", "Lock broken — target eliminated or left.", 5)
+        end
+    end
+
+    local bestScore = math.huge
+    local bestChar  = nil
+    local bestPlr   = nil
+
+    for _, data in ipairs(GetEntities()) do
+        if not data.isFriend then
+            local skipTeam = useTeam
+                and LP.Team ~= nil
+                and data.player.Team ~= nil
+                and data.player.Team == LP.Team
+            if not skipTeam then
+                local part = GetPartForName(data.char, partName)
+                if part then
+                    local sp, on = Camera:WorldToViewportPoint(part.Position)
+                    if on then
+                        local screenDist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                        if screenDist <= fov then
+                            local canHit = true
+                            if useVis then
+                                canHit = CanSee(Camera.CFrame.Position, part.Position, { lpChar, data.char })
+                            end
+                            if canHit then
+                                local score
+                                if priority == "Lowest HP" then
+                                    score = data.hum.Health
+                                elseif priority == "Closest Distance" then
+                                    score = (lpHRP.Position - data.hrp.Position).Magnitude
+                                else
+                                    score = screenDist
+                                end
+                                if score < bestScore then
+                                    bestScore = score
+                                    bestChar  = data.char
+                                    bestPlr   = data.player
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if bestChar and bestPlr then
+        local newUUID = tostring(bestPlr.UserId)
+        if newUUID ~= pvpLockedUUID then
+            pvpLockedTarget = bestChar
+            pvpLockedUUID   = newUUID
+            pvpNotifFired   = false
+        end
+        if not pvpNotifFired then
+            pvpNotifFired = true
+            Notify(
+                "PvP — Target Acquired",
+                "Locked onto: " .. bestPlr.Name .. "\nUUID: " .. newUUID .. "\nBreak manually to switch targets.",
+                8
+            )
+        end
+    end
+
+    return bestChar
+end
+
+local function FFAGetTarget()
+    local lpChar = LP.Character
+    local lpHRP  = lpChar and lpChar:FindFirstChild("HumanoidRootPart")
+    if not lpHRP then return nil end
+
+    local useVis   = Toggles.FFAVisCheck  and Toggles.FFAVisCheck.Value  or false
+    local useDynHP = Toggles.FFADynHP     and Toggles.FFADynHP.Value     or false
+    local useUUID  = Toggles.FFAUUIDLock  and Toggles.FFAUUIDLock.Value  or false
+    local partName = Options.FFAHitPart   and Options.FFAHitPart.Value   or "HumanoidRootPart"
+    local fov      = Options.FFAFOVSize   and Options.FFAFOVSize.Value   or 500
+    local useFOV   = Toggles.FFAUseFOV   and Toggles.FFAUseFOV.Value    or false
+    local center   = GetScreenCenter()
+
+    if ffaLockedTarget then
+        local hum = ffaLockedTarget:FindFirstChildOfClass("Humanoid")
+        local hrp = ffaLockedTarget:FindFirstChild("HumanoidRootPart")
+        if hum and hum.Health > 0 and hrp and ffaLockedTarget.Parent then
+            return ffaLockedTarget
+        else
+            ffaLockedTarget = nil
+            ffaLockedUUID   = nil
+            ffaNotifFired   = false
+            Notify("FFA", "Lock broken — target eliminated or left.", 5)
+        end
+    end
+
+    local bestScore = math.huge
+    local bestChar  = nil
+    local bestPlr   = nil
+
+    for _, data in ipairs(GetEntities()) do
+        if not data.isFriend then
+            local part = GetPartForName(data.char, partName)
+            if part then
+                local inFOV = true
+                if useFOV then
+                    local sp, on = Camera:WorldToViewportPoint(part.Position)
+                    if not on or (Vector2.new(sp.X, sp.Y) - center).Magnitude > fov then
+                        inFOV = false
+                    end
+                end
+                if inFOV then
+                    local canHit = true
+                    if useVis then
+                        canHit = CanSee(Camera.CFrame.Position, part.Position, { lpChar, data.char })
+                    end
+                    if canHit then
+                        local score = useDynHP
+                            and data.hum.Health
+                            or  (lpHRP.Position - data.hrp.Position).Magnitude
+                        if score < bestScore then
+                            bestScore = score
+                            bestChar  = data.char
+                            bestPlr   = data.player
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if bestChar and bestPlr then
+        local newUUID = tostring(bestPlr.UserId)
+        if newUUID ~= ffaLockedUUID then
+            ffaLockedTarget = bestChar
+            ffaLockedUUID   = newUUID
+            ffaNotifFired   = false
+        end
+        if not ffaNotifFired then
+            ffaNotifFired = true
+            local lockType = useUUID and "UUID Lock" or "Proximity Lock"
+            Notify(
+                "FFA — Target Acquired",
+                "Locked onto: " .. bestPlr.Name .. "\nUUID: " .. newUUID .. "\nMode: " .. lockType .. "\nBreak manually to switch targets.",
+                8
+            )
+        end
+    end
+
+    return bestChar
+end
+
+local PvPFOVCircle = Drawing.new("Circle")
+PvPFOVCircle.Filled       = false
+PvPFOVCircle.Color        = Color3.fromRGB(255, 255, 255)
+PvPFOVCircle.Thickness    = 0.8
+PvPFOVCircle.Transparency = 0.5
+PvPFOVCircle.NumSides     = 64
+PvPFOVCircle.Visible      = false
+
+local FFAFOVCircle = Drawing.new("Circle")
+FFAFOVCircle.Filled       = false
+FFAFOVCircle.Color        = Color3.fromRGB(255, 180, 50)
+FFAFOVCircle.Thickness    = 0.8
+FFAFOVCircle.Transparency = 0.5
+FFAFOVCircle.NumSides     = 64
+FFAFOVCircle.Visible      = false
+
+local Window = Library:CreateWindow({
+    Title            = "Tester",
+    Footer           = "v0.1 — internal",
+    Center           = true,
+    AutoShow         = true,
+    ShowCustomCursor = true,
+    ToggleKeybind    = Enum.KeyCode.RightControl,
+})
+
+local ShowRiskyDialog
+ShowRiskyDialog = function(featureName, onConfirm, onCancel)
+    Window:AddDialog("risky_" .. featureName:lower():gsub(" ", "_"), {
+        Title               = "⚠ " .. featureName:upper(),
+        Description         = "This is detectable and may result in a ban. Enable anyway?",
+        AutoDismiss         = true,
+        OutsideClickDismiss = true,
+        FooterButtons = {
+            Cancel  = { Title = "Cancel", Variant = "Ghost",       Order = 1, Callback = function() onCancel()  end },
+            Confirm = { Title = "Enable", Variant = "Destructive", Order = 2, WaitTime = 2, Callback = function() onConfirm() end },
+        },
+    })
+end
+
+local Tabs = {
+    Combat   = Window:AddTab("Combat",   "sword"   ),
+    Settings = Window:AddTab("Settings", "settings"),
+}
+
+local CombatTabbox = Tabs.Combat:AddLeftGroupbox("Combat"):AddTabbox()
+local PvPTab       = CombatTabbox:AddTab("PvP")
+local FFATab       = CombatTabbox:AddTab("FFA")
+
+local PvPRight = Tabs.Combat:AddRightGroupbox("PvP Settings")
+local FFARight = Tabs.Combat:AddRightGroupbox("FFA Settings")
+
+PvPTab:AddToggle("PvPEnabled", { Text = "Enable Aim Assist", Default = false })
+PvPTab:AddToggle("PvPUseSmoothing", { Text = "Use Smoothing", Default = true,
+    Tooltip = "Lerps camera toward target. Off = instant snap." })
+PvPTab:AddSlider("PvPSmoothing", { Text = "Smoothing", Default = 8, Min = 1, Max = 50, Rounding = 1 })
+PvPTab:AddSlider("PvPFOV", { Text = "FOV", Default = 120, Min = 10, Max = 500, Rounding = 0, Suffix = "px" })
+PvPTab:AddToggle("PvPShowFOV", { Text = "Show FOV", Default = false })
+PvPTab:AddSlider("PvPHitChance", { Text = "Hit Chance", Default = 100, Min = 1, Max = 100, Rounding = 0, Suffix = "%" })
+PvPTab:AddDropdown("PvPHitPart", { Text = "Hit Bodypart",
+    Values = { "Head", "UpperTorso", "LowerTorso", "HumanoidRootPart", "LeftUpperArm", "RightUpperArm" },
+    Default = 1 })
+PvPTab:AddDropdown("PvPPriority", { Text = "Target Priority",
+    Values = { "Closest to Crosshair", "Lowest HP", "Closest Distance" },
+    Default = 1 })
+PvPTab:AddToggle("PvPTeamCheck", { Text = "Team Check", Default = true })
+PvPTab:AddToggle("PvPVisCheck",  { Text = "Visibility Check", Default = false })
+PvPTab:AddButton({ Text = "Break Lock", Func = function()
+    pvpLockedTarget = nil
+    pvpLockedUUID   = nil
+    pvpNotifFired   = false
+    Notify("PvP", "Lock manually cleared.", 3)
+end })
+
+PvPRight:AddToggle("PvPTriggerbot", { Text = "⚠ Triggerbot", Default = false })
+PvPRight:AddSlider("PvPTriggerMin", { Text = "Min Delay", Default = 50,  Min = 0, Max = 500, Rounding = 0, Suffix = "ms" })
+PvPRight:AddSlider("PvPTriggerMax", { Text = "Max Delay", Default = 120, Min = 0, Max = 800, Rounding = 0, Suffix = "ms" })
+PvPRight:AddDivider()
+PvPRight:AddToggle("PvPHighlight", { Text = "Highlight Target", Default = false,
+    Tooltip = "SelectionBox on active locked target" })
+PvPRight:AddDivider()
+PvPRight:AddSlider("PvPHitboxSize", { Text = "Hitbox Expander", Default = 1, Min = 1, Max = 5, Rounding = 1, Suffix = "x" })
+PvPRight:AddButton({ Text = "Reset Hitbox", Func = function() ResetAllHitboxes() end })
+
+Toggles.PvPTriggerbot:OnChanged(function(state)
+    if state then
+        ShowRiskyDialog("PvP Triggerbot",
+            function() Notify("Triggerbot", "PvP triggerbot is now active.", 3) end,
+            function() Toggles.PvPTriggerbot:SetValue(false) end)
+    end
+end)
+
+FFATab:AddToggle("FFAEnabled", { Text = "Enable FFA", Default = false,
+    Tooltip = "Disables all PvP features while active" })
+FFATab:AddToggle("FFAUseSmoothing", { Text = "Use Smoothing", Default = false,
+    Tooltip = "Lerps camera toward target. Off = instant snap." })
+FFATab:AddSlider("FFASmoothing", { Text = "Smoothing", Default = 10, Min = 1, Max = 50, Rounding = 1 })
+FFATab:AddToggle("FFAUseFOV",  { Text = "Use FOV", Default = false,
+    Tooltip = "Restrict targeting to within FOV radius" })
+FFATab:AddSlider("FFAFOVSize", { Text = "FOV", Default = 500, Min = 10, Max = 1000, Rounding = 0, Suffix = "px" })
+FFATab:AddToggle("FFAShowFOV", { Text = "Show FOV", Default = false })
+FFATab:AddToggle("FFAUUIDLock", { Text = "UUID Lock", Default = false,
+    Tooltip = "Locks by player UUID — refuses to switch unless broken manually" })
+FFATab:AddToggle("FFAVisCheck", { Text = "Visibility Check", Default = false })
+FFATab:AddToggle("FFADynHP",    { Text = "Dynamic HP Filter", Default = false,
+    Tooltip = "Always locks lowest HP target" })
+FFATab:AddSlider("FFAHitChance", { Text = "Hit Chance", Default = 100, Min = 1, Max = 100, Rounding = 0, Suffix = "%" })
+FFATab:AddDropdown("FFAHitPart", { Text = "Hit Bodypart",
+    Values = { "Head", "UpperTorso", "LowerTorso", "HumanoidRootPart", "LeftUpperArm", "RightUpperArm" },
+    Default = 4 })
+FFATab:AddButton({ Text = "Break Lock", Func = function()
+    ffaLockedTarget = nil
+    ffaLockedUUID   = nil
+    ffaNotifFired   = false
+    Notify("FFA", "Lock manually cleared.", 3)
+end })
+
+FFARight:AddToggle("FFATriggerbot", { Text = "⚠ Triggerbot", Default = false })
+FFARight:AddSlider("FFATriggerMin", { Text = "Min Delay", Default = 50,  Min = 0, Max = 500, Rounding = 0, Suffix = "ms" })
+FFARight:AddSlider("FFATriggerMax", { Text = "Max Delay", Default = 120, Min = 0, Max = 800, Rounding = 0, Suffix = "ms" })
+FFARight:AddDivider()
+FFARight:AddToggle("FFAHighlight", { Text = "Highlight Target", Default = false,
+    Tooltip = "SelectionBox on active locked target" })
+FFARight:AddDivider()
+FFARight:AddSlider("FFAHitboxSize", { Text = "Hitbox Expander", Default = 1, Min = 1, Max = 5, Rounding = 1, Suffix = "x" })
+FFARight:AddButton({ Text = "Reset Hitbox", Func = function() ResetAllHitboxes() end })
+
+Toggles.FFATriggerbot:OnChanged(function(state)
+    if state then
+        ShowRiskyDialog("FFA Triggerbot",
+            function() Notify("Triggerbot", "FFA triggerbot is now active.", 3) end,
+            function() Toggles.FFATriggerbot:SetValue(false) end)
+    end
+end)
+
+Toggles.FFAUUIDLock:OnChanged(function(state)
+    if not state then
+        ffaLockedTarget = nil
+        ffaLockedUUID   = nil
+        ffaNotifFired   = false
+    end
+end)
+
+Toggles.FFAEnabled:OnChanged(function(state)
+    if state then
+        if Toggles.PvPEnabled and Toggles.PvPEnabled.Value then
+            Toggles.PvPEnabled:SetValue(false)
+        end
+        entityCache     = {}
+        entityCacheTime = 0
+        Notify("FFA", "FFA mode is now active.\nPvP has been disabled.", 4)
+    else
+        ffaLockedTarget = nil
+        ffaLockedUUID   = nil
+        ffaNotifFired   = false
+        ClearHighlights()
+        ResetAllHitboxes()
+        FFAFOVCircle.Visible = false
+    end
+end)
+
+Toggles.PvPEnabled:OnChanged(function(state)
+    if state then
+        if Toggles.FFAEnabled and Toggles.FFAEnabled.Value then
+            Toggles.FFAEnabled:SetValue(false)
+        end
+        entityCache     = {}
+        entityCacheTime = 0
+    else
+        pvpLockedTarget = nil
+        pvpLockedUUID   = nil
+        pvpNotifFired   = false
+        ClearHighlights()
+        PvPFOVCircle.Visible = false
+        ResetAllHitboxes()
+    end
+end)
+
+local SettingsGroup     = Tabs.Settings:AddLeftGroupbox("Menu")
+local SettingsGroupRight = Tabs.Settings:AddRightGroupbox("Appearance")
+
+SettingsGroup:AddToggle("ShowCustomCursor", { Text = "Custom Cursor", Default = true,
+    Callback = function(v) Library.ShowCustomCursor = v end })
+SettingsGroup:AddToggle("KeybindMenuOpen", { Text = "Show Keybind Menu", Default = false,
+    Callback = function(v) Library.KeybindFrame.Visible = v end })
+SettingsGroup:AddDropdown("NotificationSide", { Text = "Notification Side", Values = { "Left", "Right" }, Default = 1,
+    Callback = function(v) Library:SetNotifySide(v) end })
+SettingsGroup:AddLabel("Menu Keybind"):AddKeyPicker("MenuKeybind", { Default = "RightControl", NoUI = true, Text = "Menu Keybind" })
+Library.ToggleKeybind = Options.MenuKeybind
+SettingsGroup:AddButton({ Text = "Unload", Func = function()
+    Notify("Unloading", "Script is stopping...", 2)
+    task.wait(0.5)
+    Library:Unload()
+end })
+
+Library:GiveSignal(RunService.RenderStepped:Connect(function(dt)
+    if Library.Toggled then
+        PvPFOVCircle.Visible = false
+        FFAFOVCircle.Visible = false
+        ClearHighlights()
+        return
+    end
+
+    frameCount = frameCount + 1
+    if frameCount < 2 then return end
+    frameCount = 0
+
+    local center = GetScreenCenter()
+    local pvpOn  = Toggles.PvPEnabled and Toggles.PvPEnabled.Value
+    local ffaOn  = Toggles.FFAEnabled and Toggles.FFAEnabled.Value
+
+    if pvpOn then
+        local fov     = Options.PvPFOV and Options.PvPFOV.Value or 120
+        local showFOV = Toggles.PvPShowFOV and Toggles.PvPShowFOV.Value or false
+        PvPFOVCircle.Visible  = showFOV
+        PvPFOVCircle.Radius   = fov
+        PvPFOVCircle.Position = center
+
+        if PassesHitChance(Options.PvPHitChance and Options.PvPHitChance.Value or 100) then
+            local target = PvPGetTarget()
+            if target then
+                local partName = Options.PvPHitPart and Options.PvPHitPart.Value or "Head"
+                local part     = GetPartForName(target, partName)
+                if part then
+                    local useSmooth = Toggles.PvPUseSmoothing and Toggles.PvPUseSmoothing.Value
+                    if useSmooth then
+                        local smooth = Options.PvPSmoothing and Options.PvPSmoothing.Value or 8
+                        Camera.CFrame = Camera.CFrame:Lerp(
+                            CFrame.new(Camera.CFrame.Position, part.Position),
+                            math.min(dt * smooth, 1)
+                        )
+                    else
+                        Camera.CFrame = CFrame.new(Camera.CFrame.Position, part.Position)
+                    end
+                end
+
+                if Toggles.PvPHighlight and Toggles.PvPHighlight.Value then
+                    SetHighlight(target, true)
+                    for char in pairs(ActiveHighlights) do
+                        if char ~= target then SetHighlight(char, false) end
+                    end
+                else
+                    ClearHighlights()
+                end
+
+                local hbSize = Options.PvPHitboxSize and Options.PvPHitboxSize.Value or 1
+                if hbSize > 1 then SetHitbox(hbSize, target) end
+            else
+                ClearHighlights()
+            end
+        end
+
+        if Toggles.PvPTriggerbot and Toggles.PvPTriggerbot.Value then
+            local mouse   = LP:GetMouse()
+            local mTarget = mouse.Target
+            if mTarget then
+                local tChar = Players:GetPlayerFromCharacter(mTarget.Parent)
+                if tChar and tChar ~= LP then
+                    local wls      = GetWLStatus(tChar)
+                    local skipTeam = Toggles.PvPTeamCheck and Toggles.PvPTeamCheck.Value
+                        and LP.Team ~= nil and tChar.Team ~= nil and tChar.Team == LP.Team
+                    if wls ~= "friend" and wls ~= "neutral" and not skipTeam then
+                        local minD = Options.PvPTriggerMin and Options.PvPTriggerMin.Value or 50
+                        local maxD = Options.PvPTriggerMax and Options.PvPTriggerMax.Value or 120
+                        task.delay(math.random(minD, maxD) / 1000, function()
+                            if Toggles.PvPTriggerbot and Toggles.PvPTriggerbot.Value then
+                                mouse1click()
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+
+    else
+        PvPFOVCircle.Visible = false
+    end
+
+    if ffaOn then
+        local showFOV = Toggles.FFAShowFOV and Toggles.FFAShowFOV.Value or false
+        local useFOV  = Toggles.FFAUseFOV  and Toggles.FFAUseFOV.Value  or false
+        local fov     = Options.FFAFOVSize  and Options.FFAFOVSize.Value  or 500
+        FFAFOVCircle.Visible  = showFOV and useFOV
+        FFAFOVCircle.Radius   = fov
+        FFAFOVCircle.Position = center
+
+        if PassesHitChance(Options.FFAHitChance and Options.FFAHitChance.Value or 100) then
+            local target = FFAGetTarget()
+            if target then
+                local partName = Options.FFAHitPart and Options.FFAHitPart.Value or "HumanoidRootPart"
+                local part     = GetPartForName(target, partName)
+                if part then
+                    local useSmooth = Toggles.FFAUseSmoothing and Toggles.FFAUseSmoothing.Value
+                    if useSmooth then
+                        local smooth = Options.FFASmoothing and Options.FFASmoothing.Value or 10
+                        Camera.CFrame = Camera.CFrame:Lerp(
+                            CFrame.new(Camera.CFrame.Position, part.Position),
+                            math.min(dt * smooth, 1)
+                        )
+                    else
+                        Camera.CFrame = CFrame.new(Camera.CFrame.Position, part.Position)
+                    end
+                end
+
+                if Toggles.FFAHighlight and Toggles.FFAHighlight.Value then
+                    SetHighlight(target, true)
+                    for char in pairs(ActiveHighlights) do
+                        if char ~= target then SetHighlight(char, false) end
+                    end
+                else
+                    ClearHighlights()
+                end
+
+                local hbSize = Options.FFAHitboxSize and Options.FFAHitboxSize.Value or 1
+                if hbSize > 1 then SetHitbox(hbSize, target) end
+            else
+                ClearHighlights()
+            end
+        end
+
+        if Toggles.FFATriggerbot and Toggles.FFATriggerbot.Value then
+            local mouse   = LP:GetMouse()
+            local mTarget = mouse.Target
+            if mTarget then
+                local tChar = Players:GetPlayerFromCharacter(mTarget.Parent)
+                if tChar and tChar ~= LP then
+                    local wls = GetWLStatus(tChar)
+                    if wls ~= "friend" and wls ~= "neutral" then
+                        local minD = Options.FFATriggerMin and Options.FFATriggerMin.Value or 50
+                        local maxD = Options.FFATriggerMax and Options.FFATriggerMax.Value or 120
+                        task.delay(math.random(minD, maxD) / 1000, function()
+                            if Toggles.FFATriggerbot and Toggles.FFATriggerbot.Value then
+                                mouse1click()
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+
+    else
+        FFAFOVCircle.Visible = false
+    end
+end))
+
+Library:OnUnload(function()
+    ClearHighlights()
+    ResetAllHitboxes()
+    if PvPFOVCircle.__OBJECT_EXISTS then PvPFOVCircle:Remove() end
+    if FFAFOVCircle.__OBJECT_EXISTS then FFAFOVCircle:Remove() end
+end)
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+ThemeManager:SetFolder("Tester")
+SaveManager:SetFolder("Tester/configs")
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:BuildConfigSection(Tabs.Settings)
