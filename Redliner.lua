@@ -24,12 +24,10 @@ local triggerFiring = false
 local autoClickConn = nil
 local SpeedHackConn = nil
 local KillCount = 0
-
 local SilentAimHook = nil
 local SilentAimIndexHook = nil
 local SilentAimCache = nil
 local SilentAimCacheTime = 0
-
 local pulseActive = false
 local pulseTimer = 0
 local PULSE_DURATION = 0.3
@@ -38,12 +36,10 @@ local aimState = {
     lock = nil,
     uuid = nil,
     phase = "idle",
-    acqTimer = 0,
 }
 
 local velHistory = {}
 local VEL_HISTORY_SIZE = 5
-
 local visCache = {}
 local visCacheTime = {}
 
@@ -62,38 +58,18 @@ FOVPulse.NumSides = 64
 FOVPulse.Visible = false
 FOVPulse.Color = Color3.fromRGB(255, 255, 255)
 
-local LockLabel = Drawing.new("Text")
-LockLabel.Size = 13
-LockLabel.Center = true
-LockLabel.Outline = true
-LockLabel.Color = Color3.fromRGB(255, 200, 0)
-LockLabel.Transparency = 1
-LockLabel.Visible = false
+local LockLabelDraw = Drawing.new("Text")
+LockLabelDraw.Size = 13
+LockLabelDraw.Center = true
+LockLabelDraw.Outline = true
+LockLabelDraw.Color = Color3.fromRGB(255, 200, 0)
+LockLabelDraw.Transparency = 1
+LockLabelDraw.Visible = false
 
-local function GetRedlinerTeam(player)
+local function IsTeammate(player)
     local char = player.Character
-    if char then
-        local v = char:GetAttribute("Team")
-            or char:GetAttribute("Faction")
-            or char:GetAttribute("Side")
-            or char:GetAttribute("Alliance")
-        if v ~= nil then return tostring(v) end
-    end
-    local v2 = player:GetAttribute("Team")
-        or player:GetAttribute("Faction")
-        or player:GetAttribute("Side")
-    if v2 ~= nil then return tostring(v2) end
-    local tv = player:FindFirstChild("Team")
-        or (player:FindFirstChild("Data") and player:FindFirstChild("Data"):FindFirstChild("Team"))
-    if tv and tv.Value ~= nil then return tostring(tv.Value) end
-    if player.Team then return tostring(player.Team) end
-    return nil
-end
-
-local function SameTeamRedliner(a, b)
-    local ta = GetRedlinerTeam(a)
-    local tb = GetRedlinerTeam(b)
-    return ta ~= nil and tb ~= nil and ta == tb
+    if not char then return false end
+    return char:GetAttribute("is_teammate") == true
 end
 
 local function GetHRP()
@@ -179,6 +155,53 @@ local function GetPlayerEntities()
     return list
 end
 
+local function SetHitbox(multiplier, char)
+    local target = char or LP.Character
+    if not target then return end
+    local hrp = target:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local key = tostring(target)
+    if multiplier <= 1 then
+        if HitboxOriginals[key] then hrp.Size = HitboxOriginals[key] end
+        return
+    end
+    if not HitboxOriginals[key] then HitboxOriginals[key] = hrp.Size end
+    hrp.Size = HitboxOriginals[key] * multiplier
+end
+
+local function ResetHitbox(char)
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local key = tostring(char)
+    if hrp and HitboxOriginals[key] then hrp.Size = HitboxOriginals[key] end
+    HitboxOriginals[key] = nil
+    if HitboxConnections[key] then
+        HitboxConnections[key]:Disconnect()
+        HitboxConnections[key] = nil
+    end
+end
+
+local function ResetAllHitboxes()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Character then ResetHitbox(plr.Character) end
+    end
+    HitboxOriginals = {}
+    HitboxConnections = {}
+end
+
+local function ApplyHitboxToChar(char)
+    if not (Toggles.HitboxEnabled and Toggles.HitboxEnabled.Value) then return end
+    local size = Options.HitboxSize and Options.HitboxSize.Value or 3
+    SetHitbox(size, char)
+    local key = tostring(char)
+    if not HitboxConnections[key] then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            HitboxConnections[key] = hum.Died:Connect(function() ResetHitbox(char) end)
+        end
+    end
+end
+
 local function SampleVelocity(hrp)
     local id = tostring(hrp)
     if not velHistory[id] then velHistory[id] = {} end
@@ -206,18 +229,14 @@ local function PredictPosition(hrp)
     local lookahead = Options.VelocityLookahead and Options.VelocityLookahead.Value or 50
     local strength = Options.PredictionStrength and Options.PredictionStrength.Value or 100
     local vel = GetSmoothedVelocity(hrp)
-
     local pingComp = 0
     if Toggles.PingCompensation and Toggles.PingCompensation.Value then
         pingComp = GetPing() / 2
     end
-
     local totalLead = (pingComp + lookahead) / 1000 * (strength / 100)
-
     local vx = Toggles.StrafePrediction and Toggles.StrafePrediction.Value and vel.X or 0
     local vy = Toggles.VerticalPrediction and Toggles.VerticalPrediction.Value and vel.Y or 0
     local vz = Toggles.StrafePrediction and Toggles.StrafePrediction.Value and vel.Z or 0
-
     return hrp.Position + Vector3.new(vx, vy, vz) * totalLead
 end
 
@@ -254,7 +273,6 @@ local function GetRageTarget()
     local lpChar = LP.Character
     local lpHRP = lpChar and lpChar:FindFirstChild("HumanoidRootPart")
     if not lpHRP then return nil, nil end
-
     local useTeam = Toggles.AimlockTeamCheck and Toggles.AimlockTeamCheck.Value
     local useVis = Toggles.AimlockVisCheck and Toggles.AimlockVisCheck.Value
     local fov = Options.AimlockFOV and Options.AimlockFOV.Value or 120
@@ -262,17 +280,13 @@ local function GetRageTarget()
     local useUUID = Toggles.UUIDLock and Toggles.UUIDLock.Value
     local useSticky = Toggles.StickyAim and Toggles.StickyAim.Value
     local center = ScreenCenter()
-
     if aimState.lock then
         local hum = aimState.lock:FindFirstChildOfClass("Humanoid")
         local hrp = aimState.lock:FindFirstChild("HumanoidRootPart")
         if not aimState.lock.Parent or not hum or hum.Health <= 0 or not hrp then
-            aimState.lock = nil
-            aimState.uuid = nil
-            aimState.phase = "idle"
+            aimState.lock = nil aimState.uuid = nil aimState.phase = "idle"
         end
     end
-
     if useUUID and aimState.lock then
         local hrp = aimState.lock:FindFirstChild("HumanoidRootPart")
         local hum = aimState.lock:FindFirstChildOfClass("Humanoid")
@@ -282,7 +296,6 @@ local function GetRageTarget()
             return part, { char = aimState.lock, hrp = hrp, hum = hum }
         end
     end
-
     if useSticky and aimState.lock then
         local hrp = aimState.lock:FindFirstChild("HumanoidRootPart")
         local hum = aimState.lock:FindFirstChildOfClass("Humanoid")
@@ -293,19 +306,15 @@ local function GetRageTarget()
                 aimState.phase = "tracking"
                 return part, { char = aimState.lock, hrp = hrp, hum = hum }
             else
-                aimState.lock = nil
-                aimState.uuid = nil
-                aimState.phase = "idle"
+                aimState.lock = nil aimState.uuid = nil aimState.phase = "idle"
             end
         end
     end
-
     local bestScore = math.huge
     local bestData = nil
     local bestPart = nil
-
     for _, data in ipairs(GetPlayerEntities()) do
-        local skip = useTeam and SameTeamRedliner(LP, data.player)
+        local skip = useTeam and IsTeammate(data.player)
         if not skip then
             local part = GetAntiAimPart(data)
             if part then
@@ -320,9 +329,7 @@ local function GetRageTarget()
                         if canHit then
                             local score = useNTD and (data.hum.Health / data.hum.MaxHealth) or sd
                             if score < bestScore then
-                                bestScore = score
-                                bestData = data
-                                bestPart = part
+                                bestScore = score bestData = data bestPart = part
                             end
                         end
                     end
@@ -330,21 +337,16 @@ local function GetRageTarget()
             end
         end
     end
-
     if bestData then
         local uuid = tostring(bestData.player.UserId)
         if uuid ~= aimState.uuid then
-            aimState.lock = bestData.char
-            aimState.uuid = uuid
+            aimState.lock = bestData.char aimState.uuid = uuid
             aimState.phase = "acquiring"
-            aimState.acqTimer = tick()
-            pulseActive = true
-            pulseTimer = PULSE_DURATION
+            pulseActive = true pulseTimer = PULSE_DURATION
         else
             aimState.phase = "tracking"
         end
     end
-
     return bestPart, bestData
 end
 
@@ -357,8 +359,7 @@ local function GetSilentTarget()
     local best = fov
     local closest = nil
     for _, data in ipairs(GetPlayerEntities()) do
-        local useTeam = Toggles.AimlockTeamCheck and Toggles.AimlockTeamCheck.Value
-        if not (useTeam and SameTeamRedliner(LP, data.player)) then
+        if not IsTeammate(data.player) then
             local part = GetAntiAimPart(data)
             if part then
                 local sp, on = Camera:WorldToViewportPoint(part.Position)
@@ -424,57 +425,6 @@ local function EnableSilentAim()
     SilentAimIndexHook = oldIdx
 end
 
-local function SetHitbox(multiplier, char)
-    local target = char or LP.Character
-    if not target then return end
-    local hrp = target:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    local key = tostring(target)
-    if multiplier <= 1 then
-        if HitboxOriginals[key] then hrp.Size = HitboxOriginals[key] end
-        return
-    end
-    if not HitboxOriginals[key] then HitboxOriginals[key] = hrp.Size end
-    hrp.Size = HitboxOriginals[key] * multiplier
-end
-
-local function ResetHitbox(char)
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local key = tostring(char)
-    if hrp and HitboxOriginals[key] then
-        hrp.Size = HitboxOriginals[key]
-    end
-    HitboxOriginals[key] = nil
-    if HitboxConnections[key] then
-        HitboxConnections[key]:Disconnect()
-        HitboxConnections[key] = nil
-    end
-end
-
-local function ResetAllHitboxes()
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr.Character then ResetHitbox(plr.Character) end
-    end
-    HitboxOriginals = {}
-    HitboxConnections = {}
-end
-
-local function ApplyHitboxToChar(char)
-    if not (Toggles.HitboxEnabled and Toggles.HitboxEnabled.Value) then return end
-    local size = Options.HitboxSize and Options.HitboxSize.Value or 3
-    SetHitbox(size, char)
-    local key = tostring(char)
-    if not HitboxConnections[key] then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            HitboxConnections[key] = hum.Died:Connect(function()
-                ResetHitbox(char)
-            end)
-        end
-    end
-end
-
 local espPool = {}
 local espSlots = {}
 local chamObjects = {}
@@ -504,8 +454,7 @@ end
 
 local function NewLine()
     local l = Drawing.new("Line")
-    l.Visible = false
-    l.Transparency = 1
+    l.Visible = false l.Transparency = 1
     return l
 end
 
@@ -513,15 +462,10 @@ local function MakeSlot()
     local sk = {}
     for i = 1, #JOINTS_R15 do sk[i] = NewLine() end
     return {
-        Box = Drawing.new("Square"),
-        BoxFill = Drawing.new("Square"),
-        Tracer = NewLine(),
-        NameText = Drawing.new("Text"),
-        HPBarBG = Drawing.new("Square"),
-        HPBar = Drawing.new("Square"),
-        HPText = Drawing.new("Text"),
-        TargetCircle = Drawing.new("Circle"),
-        SkelLines = sk,
+        Box = Drawing.new("Square"), BoxFill = Drawing.new("Square"), Tracer = NewLine(),
+        NameText = Drawing.new("Text"), HPBarBG = Drawing.new("Square"),
+        HPBar = Drawing.new("Square"), HPText = Drawing.new("Text"),
+        TargetCircle = Drawing.new("Circle"), SkelLines = sk,
         CTL1 = NewLine(), CTL2 = NewLine(), CTR1 = NewLine(), CTR2 = NewLine(),
         CBL1 = NewLine(), CBL2 = NewLine(), CBR1 = NewLine(), CBR2 = NewLine(),
         ArrowLines = { NewLine(), NewLine(), NewLine() },
@@ -535,11 +479,8 @@ local function AcquireSlot(char)
     if espSlots[char] then return espSlots[char] end
     for _, slot in ipairs(espPool) do
         if not slot.inUse then
-            slot.inUse = true
-            slot.char = char
-            slot.rigType = GetRigType(char)
-            espSlots[char] = slot
-            return slot
+            slot.inUse = true slot.char = char slot.rigType = GetRigType(char)
+            espSlots[char] = slot return slot
         end
     end
     return nil
@@ -558,27 +499,15 @@ end
 local function ReleaseSlot(char)
     local slot = espSlots[char]
     if not slot then return end
-    HideSlot(slot)
-    slot.inUse = false
-    slot.char = nil
-    espSlots[char] = nil
-    if chamObjects[char] then
-        pcall(function() chamObjects[char]:Destroy() end)
-        chamObjects[char] = nil
-    end
-    visCache[char] = nil
-    visCacheTime[char] = nil
-    CleanVelHistory(char)
+    HideSlot(slot) slot.inUse = false slot.char = nil espSlots[char] = nil
+    if chamObjects[char] then pcall(function() chamObjects[char]:Destroy() end) chamObjects[char] = nil end
+    visCache[char] = nil visCacheTime[char] = nil CleanVelHistory(char)
 end
 
-local function ReleaseAllSlots()
-    for char in pairs(espSlots) do ReleaseSlot(char) end
-end
-
+local function ReleaseAllSlots() for char in pairs(espSlots) do ReleaseSlot(char) end end
 local function CleanupAllChams()
     for char, hl in pairs(chamObjects) do
-        pcall(function() hl:Destroy() end)
-        chamObjects[char] = nil
+        pcall(function() hl:Destroy() end) chamObjects[char] = nil
     end
 end
 
@@ -598,36 +527,8 @@ local function DrawCorner(slot, x, y, w, h, col, thick)
     }
     for _, p in ipairs(pts) do
         if p[1].__OBJECT_EXISTS then
-            p[1].Visible = true
-            p[1].From = Vector2.new(p[2], p[3])
-            p[1].To = Vector2.new(p[4], p[5])
-            p[1].Color = col
-            p[1].Thickness = thick
-            p[1].Transparency = 1
-        end
-    end
-end
-
-local function DrawArrow(slot, sp, col, vp)
-    local c = ScreenCenter()
-    local dir = (sp - c).Unit
-    local tip = c + dir * 65
-    local perp = Vector2.new(-dir.Y, dir.X)
-    local b1 = tip - dir * 6 + perp * 3
-    local b2 = tip - dir * 6 - perp * 3
-    local lines = {
-        { slot.ArrowLines[1], tip, b1 },
-        { slot.ArrowLines[2], tip, b2 },
-        { slot.ArrowLines[3], b1, b2 },
-    }
-    for _, p in ipairs(lines) do
-        if p[1].__OBJECT_EXISTS then
-            p[1].Visible = true
-            p[1].From = p[2]
-            p[1].To = p[3]
-            p[1].Color = col
-            p[1].Thickness = 1.2
-            p[1].Transparency = 0.75
+            p[1].Visible = true p[1].From = Vector2.new(p[2], p[3]) p[1].To = Vector2.new(p[4], p[5])
+            p[1].Color = col p[1].Thickness = thick p[1].Transparency = 1
         end
     end
 end
@@ -635,11 +536,7 @@ end
 Players.PlayerRemoving:Connect(function(plr)
     local char = plr.Character
     if char then
-        task.defer(function()
-            ReleaseSlot(char)
-            ResetHitbox(char)
-            CleanVelHistory(char)
-        end)
+        task.defer(function() ReleaseSlot(char) ResetHitbox(char) CleanVelHistory(char) end)
         FlushPlayerCache()
     end
 end)
@@ -647,13 +544,8 @@ end)
 local function HookDeath(char, plr)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
-
     hum.Died:Connect(function()
-        if aimState.lock == char then
-            aimState.lock = nil
-            aimState.uuid = nil
-            aimState.phase = "idle"
-        end
+        if aimState.lock == char then aimState.lock = nil aimState.uuid = nil aimState.phase = "idle" end
         KillCount += 1
         if Toggles.KillNotif and Toggles.KillNotif.Value then
             Library:Notify({
@@ -663,40 +555,24 @@ local function HookDeath(char, plr)
             })
         end
         FlushPlayerCache()
-        task.delay(0.1, function()
-            ReleaseSlot(char)
-            ResetHitbox(char)
-            CleanVelHistory(char)
-        end)
+        task.delay(0.1, function() ReleaseSlot(char) ResetHitbox(char) CleanVelHistory(char) end)
     end)
-
     char.AncestryChanged:Connect(function()
         if not char.Parent then
             FlushPlayerCache()
-            task.defer(function()
-                ReleaseSlot(char)
-                ResetHitbox(char)
-                CleanVelHistory(char)
-            end)
+            task.defer(function() ReleaseSlot(char) ResetHitbox(char) CleanVelHistory(char) end)
         end
     end)
 end
 
 if LP.Character then HookDeath(LP.Character, LP) end
-
 LP.CharacterAdded:Connect(function(char)
     HookDeath(char, LP)
-    aimState.lock = nil
-    aimState.uuid = nil
-    aimState.phase = "idle"
+    aimState.lock = nil aimState.uuid = nil aimState.phase = "idle"
     FlushPlayerCache()
 end)
-
 Players.PlayerAdded:Connect(function(plr)
-    plr.CharacterAdded:Connect(function(char)
-        HookDeath(char, plr)
-        FlushPlayerCache()
-    end)
+    plr.CharacterAdded:Connect(function(char) HookDeath(char, plr) FlushPlayerCache() end)
 end)
 
 local function ApplySpeedHack()
@@ -704,9 +580,7 @@ local function ApplySpeedHack()
     if not (Toggles.SpeedHackEnabled and Toggles.SpeedHackEnabled.Value) then return end
     SpeedHackConn = RunService.Heartbeat:Connect(function()
         if not (Toggles.SpeedHackEnabled and Toggles.SpeedHackEnabled.Value) then
-            SpeedHackConn:Disconnect()
-            SpeedHackConn = nil
-            return
+            SpeedHackConn:Disconnect() SpeedHackConn = nil return
         end
         local hum = GetHum()
         if hum then hum.WalkSpeed = Options.SpeedHackValue and Options.SpeedHackValue.Value or 50 end
@@ -715,54 +589,30 @@ end
 
 Library:GiveSignal(RunService.RenderStepped:Connect(function(dt)
     if Library.Toggled then
-        FOVCircle.Visible = false
-        FOVPulse.Visible = false
-        LockLabel.Visible = false
-        return
+        FOVCircle.Visible = false FOVPulse.Visible = false LockLabelDraw.Visible = false return
     end
-
     local center = ScreenCenter()
-
     UpdateFOVColor()
-
     if Toggles.ShowFOV and Toggles.ShowFOV.Value then
         local fovR = Options.AimlockFOV and Options.AimlockFOV.Value or 120
-        FOVCircle.Visible = true
-        FOVCircle.Radius = fovR
-        FOVCircle.Position = center
-
+        FOVCircle.Visible = true FOVCircle.Radius = fovR FOVCircle.Position = center
         if pulseActive then
             pulseTimer = pulseTimer - dt
             local progress = 1 - (pulseTimer / PULSE_DURATION)
-            FOVPulse.Visible = true
-            FOVPulse.Radius = fovR * (1 + progress * 0.12)
-            FOVPulse.Transparency = 0.6 + progress * 0.38
-            FOVPulse.Position = center
-            if pulseTimer <= 0 then
-                pulseActive = false
-                FOVPulse.Visible = false
-            end
-        else
-            FOVPulse.Visible = false
-        end
-    else
-        FOVCircle.Visible = false
-        FOVPulse.Visible = false
-    end
-
+            FOVPulse.Visible = true FOVPulse.Radius = fovR * (1 + progress * 0.12)
+            FOVPulse.Transparency = 0.6 + progress * 0.38 FOVPulse.Position = center
+            if pulseTimer <= 0 then pulseActive = false FOVPulse.Visible = false end
+        else FOVPulse.Visible = false end
+    else FOVCircle.Visible = false FOVPulse.Visible = false end
     if Toggles.LockIndicator and Toggles.LockIndicator.Value and aimState.lock then
         local plr = Players:GetPlayerFromCharacter(aimState.lock)
         local name = plr and plr.Name or "Unknown"
         local modeStr = Toggles.UUIDLock and Toggles.UUIDLock.Value and "UUID"
-            or Toggles.StickyAim and Toggles.StickyAim.Value and "Sticky"
-            or "Normal"
-        LockLabel.Text = name .. " — " .. modeStr
-        LockLabel.Position = Vector2.new(center.X, center.Y + (Options.AimlockFOV and Options.AimlockFOV.Value or 120) + 14)
-        LockLabel.Visible = true
-    else
-        LockLabel.Visible = false
-    end
-
+            or Toggles.StickyAim and Toggles.StickyAim.Value and "Sticky" or "Normal"
+        LockLabelDraw.Text = name .. " — " .. modeStr
+        LockLabelDraw.Position = Vector2.new(center.X, center.Y + (Options.AimlockFOV and Options.AimlockFOV.Value or 120) + 14)
+        LockLabelDraw.Visible = true
+    else LockLabelDraw.Visible = false end
     if Toggles.AimlockEnabled and Toggles.AimlockEnabled.Value then
         local part, data = GetRageTarget()
         if part and data then
@@ -770,34 +620,26 @@ Library:GiveSignal(RunService.RenderStepped:Connect(function(dt)
             if Toggles.VelocityPrediction and Toggles.VelocityPrediction.Value then
                 local predicted = PredictPosition(data.hrp)
                 aimPos = predicted + (part.Position - data.hrp.Position)
-            else
-                aimPos = part.Position
-            end
+            else aimPos = part.Position end
             Camera.CFrame = CFrame.new(Camera.CFrame.Position, aimPos)
         end
     end
-
     if Toggles.AutoShootEnabled and Toggles.AutoShootEnabled.Value and not triggerFiring then
         local mt = LP:GetMouse().Target
         if mt then
             local tc = Players:GetPlayerFromCharacter(mt.Parent)
-            if tc and tc ~= LP then
-                local skip = Toggles.AimlockTeamCheck and Toggles.AimlockTeamCheck.Value and SameTeamRedliner(LP, tc)
-                if not skip then
-                    triggerFiring = true
-                    task.delay(math.random(0, 15) / 1000, function()
-                        if Toggles.AutoShootEnabled.Value then FireInput("UIS") end
-                        triggerFiring = false
-                    end)
-                end
+            if tc and tc ~= LP and not IsTeammate(tc) then
+                triggerFiring = true
+                task.delay(math.random(0, 15) / 1000, function()
+                    if Toggles.AutoShootEnabled.Value then FireInput("UIS") end
+                    triggerFiring = false
+                end)
             end
         end
     end
-
     if Toggles.HitboxEnabled and Toggles.HitboxEnabled.Value then
         for _, data in ipairs(GetPlayerEntities()) do
-            local skip = Toggles.AimlockTeamCheck and Toggles.AimlockTeamCheck.Value and SameTeamRedliner(LP, data.player)
-            if not skip then ApplyHitboxToChar(data.char) end
+            if not IsTeammate(data.player) then ApplyHitboxToChar(data.char) end
         end
     end
 end))
@@ -807,90 +649,46 @@ Library:GiveSignal(RunService.Heartbeat:Connect(function()
     espFrameSkip = espFrameSkip + 1
     if espFrameSkip < 2 then return end
     espFrameSkip = 0
-
     local espOn = Toggles.ESPEnabled and Toggles.ESPEnabled.Value
     local chamsOn = Toggles.ChamsEnabled and Toggles.ChamsEnabled.Value
     if not espOn and not chamsOn then return end
-
     local lpChar = LP.Character
     local lpHRP = lpChar and lpChar:FindFirstChild("HumanoidRootPart")
     local vp = Camera.ViewportSize
     local now = tick()
     local seen = {}
-
     for _, data in ipairs(GetPlayerEntities()) do
-        local char = data.char
-        local hum = data.hum
-        local hrp = data.hrp
-        local plr = data.player
+        local char = data.char local hum = data.hum local hrp = data.hrp local plr = data.player
         seen[char] = true
-
         if not (char and char.Parent and hrp and hum and hum.Health > 0) then continue end
         local maxDist = Options.ESPMaxDistance and Options.ESPMaxDistance.Value or 1000
         if lpHRP and (lpHRP.Position - hrp.Position).Magnitude > maxDist then continue end
-
-        local useTeam = Toggles.AimlockTeamCheck and Toggles.AimlockTeamCheck.Value
-        local isFriend = useTeam and SameTeamRedliner(LP, plr)
+        local isFriend = IsTeammate(plr)
         local isLocked = aimState.lock == char
-
         if chamsOn then
             if not chamObjects[char] then
                 local hl = Instance.new("Highlight")
-                hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                hl.Parent = char
-                chamObjects[char] = hl
+                hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop hl.Parent = char chamObjects[char] = hl
             end
             local hl = chamObjects[char]
             if isLocked then
-                hl.FillColor = Color3.fromRGB(255, 200, 0)
-                hl.FillTransparency = 0.4
-                hl.OutlineColor = Color3.fromRGB(255, 200, 0)
-                hl.OutlineTransparency = 0
+                hl.FillColor = Color3.fromRGB(255, 200, 0) hl.FillTransparency = 0.4
+                hl.OutlineColor = Color3.fromRGB(255, 200, 0) hl.OutlineTransparency = 0
             elseif isFriend then
-                hl.FillColor = Color3.fromRGB(80, 160, 255)
-                hl.FillTransparency = 0.5
-                hl.OutlineColor = Color3.fromRGB(80, 160, 255)
-                hl.OutlineTransparency = 0
+                hl.FillColor = Color3.fromRGB(80, 160, 255) hl.FillTransparency = 0.5
+                hl.OutlineColor = Color3.fromRGB(80, 160, 255) hl.OutlineTransparency = 0
             else
                 local ec = SafeColor(Options.ChamsEnemyColor and Options.ChamsEnemyColor.Value)
-                hl.FillColor = ec
-                hl.FillTransparency = 0.5
-                hl.OutlineColor = ec
-                hl.OutlineTransparency = 0
+                hl.FillColor = ec hl.FillTransparency = 0.5 hl.OutlineColor = ec hl.OutlineTransparency = 0
             end
         else
-            if chamObjects[char] then
-                pcall(function() chamObjects[char]:Destroy() end)
-                chamObjects[char] = nil
-            end
+            if chamObjects[char] then pcall(function() chamObjects[char]:Destroy() end) chamObjects[char] = nil end
         end
-
         if not espOn then continue end
         if isFriend and Toggles.ESPTeamCheck and Toggles.ESPTeamCheck.Value then continue end
-
         local hrpSP, onScreen = Camera:WorldToViewportPoint(hrp.Position)
-        local slot = AcquireSlot(char)
-        if not slot then continue end
-
-        if not onScreen then
-            HideSlot(slot)
-            if Toggles.ESPOffscreenArrows and Toggles.ESPOffscreenArrows.Value then
-                local clampedPos = Vector2.new(
-                    math.clamp(hrpSP.X, 40, vp.X - 40),
-                    math.clamp(hrpSP.Y, 40, vp.Y - 40)
-                )
-                local col = isLocked and Color3.fromRGB(255, 200, 0)
-                    or isFriend and Color3.fromRGB(100, 180, 255)
-                    or SafeColor(Options.ESPBoxColor and Options.ESPBoxColor.Value)
-                DrawArrow(slot, clampedPos, col, vp)
-            else
-                for _, l in ipairs(slot.ArrowLines) do if l.__OBJECT_EXISTS then l.Visible = false end end
-            end
-            continue
-        end
-
-        for _, l in ipairs(slot.ArrowLines) do if l.__OBJECT_EXISTS then l.Visible = false end end
-
+        local slot = AcquireSlot(char) if not slot then continue end
+        if not onScreen then HideSlot(slot) continue end
         if Toggles.ESPVisibleOnly and Toggles.ESPVisibleOnly.Value then
             if (now - (visCacheTime[char] or 0)) >= 0.2 then
                 visCache[char] = CanSee(Camera.CFrame.Position, hrp.Position, { lpChar, char })
@@ -898,25 +696,18 @@ Library:GiveSignal(RunService.Heartbeat:Connect(function()
             end
             if not visCache[char] then HideSlot(slot) continue end
         end
-
         local hpPct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
         if hpPct <= 0 then HideSlot(slot) continue end
-
         local rigH = slot.rigType == "R6" and 5.0 or 5.8
         local botSP = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
         local topSP = Camera:WorldToViewportPoint(hrp.Position + Vector3.new(0, rigH - 3, 0))
         local midSP = Camera:WorldToViewportPoint(hrp.Position)
-        local boxH = math.abs(topSP.Y - botSP.Y)
-        local boxW = math.max(boxH / 2.2, 20)
-        local boxX = midSP.X - boxW / 2
-        local boxY = math.min(topSP.Y, botSP.Y)
-
+        local boxH = math.abs(topSP.Y - botSP.Y) local boxW = math.max(boxH / 2.2, 20)
+        local boxX = midSP.X - boxW / 2 local boxY = math.min(topSP.Y, botSP.Y)
         local col = isLocked and Color3.fromRGB(255, 200, 0)
             or isFriend and Color3.fromRGB(100, 180, 255)
             or SafeColor(Options.ESPBoxColor and Options.ESPBoxColor.Value)
-
         local boxStyle = Options.ESPBoxStyle and Options.ESPBoxStyle.Value or "Corner"
-
         if Toggles.ESPBox and Toggles.ESPBox.Value then
             if boxStyle == "Corner" then
                 if slot.Box.__OBJECT_EXISTS then slot.Box.Visible = false end
@@ -924,214 +715,108 @@ Library:GiveSignal(RunService.Heartbeat:Connect(function()
             else
                 HideCorner(slot)
                 if slot.Box.__OBJECT_EXISTS then
-                    slot.Box.Visible = true
-                    slot.Box.Size = Vector2.new(boxW, boxH)
-                    slot.Box.Position = Vector2.new(boxX, boxY)
-                    slot.Box.Color = col
-                    slot.Box.Thickness = isLocked and 1.8 or 1.2
-                    slot.Box.Filled = false
-                    slot.Box.Transparency = 1
+                    slot.Box.Visible = true slot.Box.Size = Vector2.new(boxW, boxH)
+                    slot.Box.Position = Vector2.new(boxX, boxY) slot.Box.Color = col
+                    slot.Box.Thickness = isLocked and 1.8 or 1.2 slot.Box.Filled = false slot.Box.Transparency = 1
                 end
             end
-        else
-            if slot.Box.__OBJECT_EXISTS then slot.Box.Visible = false end
-            HideCorner(slot)
-        end
-
-        if Toggles.ESPBoxFilled and Toggles.ESPBoxFilled.Value and slot.BoxFill.__OBJECT_EXISTS then
-            slot.BoxFill.Visible = true
-            slot.BoxFill.Size = Vector2.new(boxW, boxH)
-            slot.BoxFill.Position = Vector2.new(boxX, boxY)
-            slot.BoxFill.Color = col
-            slot.BoxFill.Filled = true
-            slot.BoxFill.Transparency = Options.ESPBoxFillAlpha and (1 - Options.ESPBoxFillAlpha.Value / 100) or 0.92
-        elseif slot.BoxFill.__OBJECT_EXISTS then
-            slot.BoxFill.Visible = false
-        end
-
+        else if slot.Box.__OBJECT_EXISTS then slot.Box.Visible = false end HideCorner(slot) end
         if Toggles.ESPName and Toggles.ESPName.Value and slot.NameText.__OBJECT_EXISTS then
             local nameStr = plr.Name
             if Toggles.ESPDistance and Toggles.ESPDistance.Value and lpHRP then
                 nameStr = nameStr .. " " .. math.floor((lpHRP.Position - hrp.Position).Magnitude) .. "m"
             end
-            if Toggles.ESPHealthNumerical and Toggles.ESPHealthNumerical.Value then
-                nameStr = nameStr .. " " .. math.floor(hum.Health) .. "hp"
-            end
-            slot.NameText.Visible = true
-            slot.NameText.Text = nameStr
+            slot.NameText.Visible = true slot.NameText.Text = nameStr
             slot.NameText.Position = Vector2.new(midSP.X, boxY - 13)
             slot.NameText.Color = isLocked and Color3.fromRGB(255, 200, 0) or Color3.fromRGB(255, 255, 255)
-            slot.NameText.Size = 12
-            slot.NameText.Center = true
-            slot.NameText.Outline = true
-            slot.NameText.Transparency = 1
-        elseif slot.NameText.__OBJECT_EXISTS then
-            slot.NameText.Visible = false
-        end
-
+            slot.NameText.Size = 12 slot.NameText.Center = true slot.NameText.Outline = true slot.NameText.Transparency = 1
+        elseif slot.NameText.__OBJECT_EXISTS then slot.NameText.Visible = false end
         if Toggles.ESPHealthBar and Toggles.ESPHealthBar.Value then
-            local barThick = 3
-            local barX = boxX - barThick - 3
-            local fillH = boxH * hpPct
+            local barThick = 3 local barX = boxX - barThick - 3 local fillH = boxH * hpPct
             if slot.HPBarBG.__OBJECT_EXISTS then
-                slot.HPBarBG.Visible = true
-                slot.HPBarBG.Size = Vector2.new(barThick, boxH)
-                slot.HPBarBG.Position = Vector2.new(barX, boxY)
-                slot.HPBarBG.Color = Color3.fromRGB(15, 15, 15)
-                slot.HPBarBG.Filled = true
-                slot.HPBarBG.Transparency = 1
+                slot.HPBarBG.Visible = true slot.HPBarBG.Size = Vector2.new(barThick, boxH)
+                slot.HPBarBG.Position = Vector2.new(barX, boxY) slot.HPBarBG.Color = Color3.fromRGB(15, 15, 15)
+                slot.HPBarBG.Filled = true slot.HPBarBG.Transparency = 1
             end
             if slot.HPBar.__OBJECT_EXISTS and fillH > 0 then
-                slot.HPBar.Visible = true
-                slot.HPBar.Size = Vector2.new(barThick - 2, math.max(1, fillH - 2))
+                slot.HPBar.Visible = true slot.HPBar.Size = Vector2.new(barThick - 2, math.max(1, fillH - 2))
                 slot.HPBar.Position = Vector2.new(barX + 1, boxY + boxH - fillH + 1)
-                slot.HPBar.Color = HPColor(hpPct)
-                slot.HPBar.Filled = true
-                slot.HPBar.Transparency = 1
-            end
-            if Toggles.ESPHealthNumerical and Toggles.ESPHealthNumerical.Value and slot.HPText.__OBJECT_EXISTS then
-                slot.HPText.Visible = true
-                slot.HPText.Text = math.floor(hum.Health) .. "hp"
-                slot.HPText.Position = Vector2.new(barX - 2, boxY + boxH / 2 - 5)
-                slot.HPText.Color = HPColor(hpPct)
-                slot.HPText.Size = 9
-                slot.HPText.Center = true
-                slot.HPText.Outline = true
-                slot.HPText.Transparency = 1
-            elseif slot.HPText.__OBJECT_EXISTS then
-                slot.HPText.Visible = false
+                slot.HPBar.Color = HPColor(hpPct) slot.HPBar.Filled = true slot.HPBar.Transparency = 1
             end
         else
             if slot.HPBarBG.__OBJECT_EXISTS then slot.HPBarBG.Visible = false end
             if slot.HPBar.__OBJECT_EXISTS then slot.HPBar.Visible = false end
-            if slot.HPText.__OBJECT_EXISTS then slot.HPText.Visible = false end
         end
-
         if Toggles.ESPTracer and Toggles.ESPTracer.Value and slot.Tracer.__OBJECT_EXISTS then
-            local tracerOrigin = Options.ESPTracerOrigin and Options.ESPTracerOrigin.Value or "Bottom"
-            local fromPos = tracerOrigin == "Center" and ScreenCenter() or Vector2.new(vp.X / 2, vp.Y)
-            slot.Tracer.Visible = true
-            slot.Tracer.From = fromPos
-            slot.Tracer.To = Vector2.new(midSP.X, botSP.Y)
-            slot.Tracer.Color = col
-            slot.Tracer.Thickness = 0.8
-            slot.Tracer.Transparency = 0.7
-        elseif slot.Tracer.__OBJECT_EXISTS then
-            slot.Tracer.Visible = false
-        end
-
-        if Toggles.ESPSkeleton and Toggles.ESPSkeleton.Value then
-            local joints = slot.rigType == "R6" and JOINTS_R6 or JOINTS_R15
-            local count = math.min(#joints, #slot.SkelLines)
-            for i = 1, count do
-                local j = joints[i]
-                local pA = char:FindFirstChild(j[1])
-                local pB = char:FindFirstChild(j[2])
-                local ln = slot.SkelLines[i]
-                if pA and pB and ln.__OBJECT_EXISTS then
-                    local sA, onA = Camera:WorldToViewportPoint(pA.Position)
-                    local sB, onB = Camera:WorldToViewportPoint(pB.Position)
-                    if onA and onB then
-                        ln.Visible = true
-                        ln.From = Vector2.new(sA.X, sA.Y)
-                        ln.To = Vector2.new(sB.X, sB.Y)
-                        ln.Color = j[3] == "upper" and Color3.fromRGB(220, 220, 220) or Color3.fromRGB(180, 180, 255)
-                        ln.Thickness = 0.8
-                        ln.Transparency = 0.85
-                    else
-                        ln.Visible = false
-                    end
-                elseif ln.__OBJECT_EXISTS then
-                    ln.Visible = false
-                end
-            end
-            for i = count + 1, #slot.SkelLines do
-                if slot.SkelLines[i].__OBJECT_EXISTS then slot.SkelLines[i].Visible = false end
-            end
-        else
-            for _, l in ipairs(slot.SkelLines) do if l.__OBJECT_EXISTS then l.Visible = false end end
-        end
-
+            slot.Tracer.Visible = true slot.Tracer.From = Vector2.new(vp.X / 2, vp.Y)
+            slot.Tracer.To = Vector2.new(midSP.X, botSP.Y) slot.Tracer.Color = col
+            slot.Tracer.Thickness = 0.8 slot.Tracer.Transparency = 0.7
+        elseif slot.Tracer.__OBJECT_EXISTS then slot.Tracer.Visible = false end
         if Toggles.ESPTargetCircle and Toggles.ESPTargetCircle.Value and isLocked and slot.TargetCircle.__OBJECT_EXISTS then
             local head = char:FindFirstChild("Head")
             local headPos = head and head.Position or hrp.Position + Vector3.new(0, 1.5, 0)
             local hSP, hOn = Camera:WorldToViewportPoint(headPos)
             if hOn then
-                slot.TargetCircle.Visible = true
-                slot.TargetCircle.Position = Vector2.new(hSP.X, hSP.Y)
+                slot.TargetCircle.Visible = true slot.TargetCircle.Position = Vector2.new(hSP.X, hSP.Y)
                 slot.TargetCircle.Radius = Options.ESPTargetCircleRadius and Options.ESPTargetCircleRadius.Value or 14
-                slot.TargetCircle.Color = Color3.fromRGB(255, 200, 0)
-                slot.TargetCircle.Filled = false
-                slot.TargetCircle.Thickness = 1.2
-                slot.TargetCircle.Transparency = 0.85
-                slot.TargetCircle.NumSides = 32
-            else
-                slot.TargetCircle.Visible = false
-            end
-        elseif slot.TargetCircle.__OBJECT_EXISTS then
-            slot.TargetCircle.Visible = false
-        end
+                slot.TargetCircle.Color = Color3.fromRGB(255, 200, 0) slot.TargetCircle.Filled = false
+                slot.TargetCircle.Thickness = 1.2 slot.TargetCircle.Transparency = 0.85 slot.TargetCircle.NumSides = 32
+            else slot.TargetCircle.Visible = false end
+        elseif slot.TargetCircle.__OBJECT_EXISTS then slot.TargetCircle.Visible = false end
     end
-
     for char in pairs(espSlots) do
         if not seen[char] then
             local hum = char:FindFirstChildOfClass("Humanoid")
             if not char.Parent or (hum and hum.Health <= 0) then ReleaseSlot(char) end
         end
     end
-
     for char in pairs(chamObjects) do
         local hum = char:FindFirstChildOfClass("Humanoid")
         if not char.Parent or (hum and hum.Health <= 0) then
-            pcall(function() chamObjects[char]:Destroy() end)
-            chamObjects[char] = nil
+            pcall(function() chamObjects[char]:Destroy() end) chamObjects[char] = nil
         end
     end
 end))
 
 local Window = Library:CreateWindow({
-    Title = "Redliner",
-    Footer = "v0.4",
-    Center = true,
-    AutoShow = true,
-    ToggleKeybind = Enum.KeyCode.RightControl,
+    Title = "Redliner", Footer = "v1.0 — final release",
+    Center = true, AutoShow = true, ToggleKeybind = Enum.KeyCode.RightControl,
 })
 
 local Tabs = {
-    Rage     = Window:AddTab("Rage",     "zap"),
+    Combat   = Window:AddTab("Combat",   "zap"),
     Lock     = Window:AddTab("Lock",     "shield"),
     Visuals  = Window:AddTab("Visuals",  "eye"),
     Utility  = Window:AddTab("Utility",  "grid"),
     Settings = Window:AddTab("Settings", "settings"),
 }
 
-local RageLeft  = Tabs.Rage:AddLeftGroupbox("Aimlock")
-local RageRight = Tabs.Rage:AddRightGroupbox("Combat")
+local CombatLeft  = Tabs.Combat:AddLeftGroupbox("Aimlock")
+local CombatRight = Tabs.Combat:AddRightGroupbox("Combat")
 
-RageLeft:AddToggle("AimlockEnabled",      { Text = "Aimlock",        Default = true })
-RageLeft:AddToggle("AimlockTeamCheck",    { Text = "Team Check",     Default = true })
-RageLeft:AddToggle("AimlockVisCheck",     { Text = "Vis Check",      Default = false })
-RageLeft:AddSlider("AimlockFOV",          { Text = "FOV",            Default = 120, Min = 10, Max = 600, Rounding = 0, Suffix = "px" })
-RageLeft:AddDropdown("AimlockTargetPart", { Text = "Target Part",    Values = { "Head", "UpperTorso", "HumanoidRootPart" }, Default = 1 })
-RageLeft:AddDivider()
-RageLeft:AddToggle("ShowFOV",             { Text = "Show FOV",       Default = true })
-RageLeft:AddToggle("LockIndicator",       { Text = "Lock Indicator", Default = true, Tooltip = "Shows locked target name and mode below FOV circle." })
-RageLeft:AddToggle("SilentAimEnabled",    { Text = "Silent Aim",     Default = false, Tooltip = "Requires hookmetamethod. May not work on all games." })
-
+CombatLeft:AddToggle("AimlockEnabled",      { Text = "Aimlock",        Default = true })
+CombatLeft:AddToggle("AimlockTeamCheck",    { Text = "Team Check",     Default = true, Tooltip = "Uses is_teammate attribute." })
+CombatLeft:AddToggle("AimlockVisCheck",     { Text = "Vis Check",      Default = false })
+CombatLeft:AddSlider("AimlockFOV",          { Text = "FOV",            Default = 120, Min = 10, Max = 300, Rounding = 0, Suffix = "px" })
+CombatLeft:AddDropdown("AimlockTargetPart", { Text = "Target Part",    Values = { "Head", "UpperTorso", "HumanoidRootPart" }, Default = 1 })
+CombatLeft:AddDivider()
+CombatLeft:AddToggle("ShowFOV",             { Text = "Show FOV",       Default = true })
+CombatLeft:AddToggle("LockIndicator",       { Text = "Lock Indicator", Default = true })
+CombatLeft:AddToggle("SilentAimEnabled",    { Text = "Silent Aim",     Default = false, Tooltip = "Requires hookmetamethod. May not work on Redliner." })
 Toggles.SilentAimEnabled:OnChanged(function(s) if s then EnableSilentAim() end end)
 
-RageRight:AddToggle("AutoShootEnabled",   { Text = "Auto-Shoot",     Default = true })
-RageRight:AddDivider()
-RageRight:AddToggle("HitboxEnabled",      { Text = "Hitbox",         Default = true })
-RageRight:AddSlider("HitboxSize",         { Text = "Size",           Default = 3, Min = 1, Max = 10, Rounding = 1, Suffix = "x" })
-RageRight:AddButton({ Text = "Reset Hitbox", Func = function() ResetAllHitboxes() end })
-RageRight:AddDivider()
-RageRight:AddToggle("AutoClickEnabled",   { Text = "Auto Click",     Default = false })
-RageRight:AddSlider("AutoClickRate",      { Text = "Rate",           Default = 20, Min = 1, Max = 100, Rounding = 0, Suffix = "/s" })
-RageRight:AddDivider()
-RageRight:AddToggle("KillNotif",          { Text = "Kill Notif",     Default = true })
-local KillLabel = RageRight:AddLabel({ Text = "Session Kills: 0", DoesWrap = false })
-RageRight:AddButton({ Text = "Reset Kills", Func = function()
+CombatRight:AddToggle("AutoShootEnabled",   { Text = "Auto-Shoot",     Default = true })
+CombatRight:AddDivider()
+CombatRight:AddToggle("HitboxEnabled",      { Text = "Hitbox",         Default = true })
+CombatRight:AddSlider("HitboxSize",         { Text = "Size",           Default = 3, Min = 1, Max = 8, Rounding = 1, Suffix = "x" })
+CombatRight:AddButton({ Text = "Reset Hitbox", Func = function() ResetAllHitboxes() end })
+CombatRight:AddDivider()
+CombatRight:AddToggle("AutoClickEnabled",   { Text = "Auto Click",     Default = false })
+CombatRight:AddSlider("AutoClickRate",      { Text = "Rate",           Default = 20, Min = 1, Max = 100, Rounding = 0, Suffix = "/s" })
+CombatRight:AddDivider()
+CombatRight:AddToggle("KillNotif",          { Text = "Kill Notif",     Default = true })
+local KillLabel = CombatRight:AddLabel({ Text = "Session Kills: 0", DoesWrap = false })
+CombatRight:AddButton({ Text = "Reset Kills", Func = function()
     KillCount = 0
     if KillLabel and KillLabel.SetText then KillLabel:SetText("Session Kills: 0") end
 end })
@@ -1139,146 +824,156 @@ end })
 local LockLeft  = Tabs.Lock:AddLeftGroupbox("Lock Behavior")
 local LockRight = Tabs.Lock:AddRightGroupbox("Prediction")
 
-LockLeft:AddToggle("StickyAim",          { Text = "Sticky Aim",          Default = false, Tooltip = "Holds lock while target stays inside FOV." })
-LockLeft:AddToggle("UUIDLock",           { Text = "UUID Lock",            Default = false, Tooltip = "Never swaps. Tracks exact target until dead." })
-LockLeft:AddToggle("NearestToDeath",     { Text = "Nearest to Death",     Default = true,  Tooltip = "Locks lowest HP target first." })
-LockLeft:AddToggle("AntiAimDetection",   { Text = "Anti-Aim Detection",   Default = true,  Tooltip = "Switches to HRP when target spins." })
-LockLeft:AddSlider("AntiAimThreshold",   { Text = "Anti-Aim Threshold",   Default = 8, Min = 2, Max = 20, Rounding = 1 })
+LockLeft:AddToggle("StickyAim",           { Text = "Sticky Aim",          Default = false })
+LockLeft:AddToggle("UUIDLock",            { Text = "UUID Lock",            Default = false })
+LockLeft:AddToggle("NearestToDeath",      { Text = "Nearest to Death",     Default = true })
+LockLeft:AddToggle("AntiAimDetection",    { Text = "Anti-Aim Detection",   Default = true })
+LockLeft:AddSlider("AntiAimThreshold",    { Text = "AA Threshold",         Default = 8, Min = 2, Max = 20, Rounding = 1 })
 LockLeft:AddDivider()
 LockLeft:AddButton({ Text = "Break Lock", Func = function()
-    aimState.lock = nil
-    aimState.uuid = nil
-    aimState.phase = "idle"
+    aimState.lock = nil aimState.uuid = nil aimState.phase = "idle"
     Library:Notify({ Title = "Lock Cleared", Description = "Target released.", Time = 2 })
 end })
 
 LockRight:AddToggle("VelocityPrediction",  { Text = "Velocity Prediction",  Default = true })
-LockRight:AddToggle("PingCompensation",    { Text = "Ping Compensation",    Default = true,  Tooltip = "Accounts for server latency independently." })
-LockRight:AddToggle("StrafePrediction",    { Text = "Strafe Prediction",    Default = true,  Tooltip = "Reads X/Z velocity — better on hard strafing targets." })
-LockRight:AddToggle("VerticalPrediction",  { Text = "Vertical Prediction",  Default = true,  Tooltip = "Accounts for Y velocity — jumpers." })
+LockRight:AddToggle("PingCompensation",    { Text = "Ping Compensation",    Default = true })
+LockRight:AddToggle("StrafePrediction",    { Text = "Strafe Prediction",    Default = true })
+LockRight:AddToggle("VerticalPrediction",  { Text = "Vertical Prediction",  Default = true })
 LockRight:AddDivider()
-LockRight:AddSlider("VelocityLookahead",   { Text = "Lookahead",            Default = 50,  Min = 0,   Max = 200, Rounding = 0, Suffix = "ms" })
-LockRight:AddSlider("PredictionStrength",  { Text = "Strength",             Default = 100, Min = 0,   Max = 100, Rounding = 0, Suffix = "%" })
+LockRight:AddSlider("VelocityLookahead",   { Text = "Lookahead",            Default = 50, Min = 0, Max = 200, Rounding = 0, Suffix = "ms" })
+LockRight:AddSlider("PredictionStrength",  { Text = "Strength",             Default = 100, Min = 0, Max = 100, Rounding = 0, Suffix = "%" })
 
 Toggles.UUIDLock:OnChanged(function(s) if s and Toggles.StickyAim.Value then Toggles.StickyAim:SetValue(false) end end)
 Toggles.StickyAim:OnChanged(function(s) if s and Toggles.UUIDLock.Value then Toggles.UUIDLock:SetValue(false) end end)
 
 local VisLeft  = Tabs.Visuals:AddLeftGroupbox("ESP")
 local VisRight = Tabs.Visuals:AddRightGroupbox("Chams")
-local ESPTabbox = VisLeft:AddTabbox()
+local ESPTabbox  = VisLeft:AddTabbox()
 local BoxTab     = ESPTabbox:AddTab("Box")
 local DetailsTab = ESPTabbox:AddTab("Details")
 local ExtrasTab  = ESPTabbox:AddTab("Extras")
 
-BoxTab:AddToggle("ESPEnabled",         { Text = "Enable ESP",      Default = false })
-BoxTab:AddToggle("ESPBox",             { Text = "Box",             Default = true })
-BoxTab:AddDropdown("ESPBoxStyle",      { Text = "Style",           Values = { "Corner", "Full" }, Default = 1 })
+BoxTab:AddToggle("ESPEnabled",          { Text = "Enable ESP",       Default = false })
+BoxTab:AddToggle("ESPBox",              { Text = "Box",              Default = true })
+BoxTab:AddDropdown("ESPBoxStyle",       { Text = "Style",            Values = { "Corner", "Full" }, Default = 1 })
 do local BCT = BoxTab:AddToggle("_BCT", { Text = "Box Color", Default = false })
    BCT:AddColorPicker("ESPBoxColor", { Title = "Box", Default = Color3.fromRGB(255, 50, 50) }) end
-BoxTab:AddToggle("ESPBoxFilled",       { Text = "Filled Box",      Default = false })
-BoxTab:AddSlider("ESPBoxFillAlpha",    { Text = "Fill Opacity",    Default = 8, Min = 1, Max = 40, Rounding = 0, Suffix = "%" })
-BoxTab:AddDivider()
-BoxTab:AddToggle("ESPTeamCheck",       { Text = "Team Check",      Default = true })
-BoxTab:AddToggle("ESPVisibleOnly",     { Text = "Visible Only",    Default = false })
-BoxTab:AddToggle("ESPOffscreenArrows", { Text = "Offscreen Arrows",Default = false })
-BoxTab:AddSlider("ESPMaxDistance",     { Text = "Max Distance",    Default = 1000, Min = 50, Max = 5000, Rounding = 0, Suffix = " studs" })
+BoxTab:AddToggle("ESPTeamCheck",        { Text = "Team Check",       Default = true })
+BoxTab:AddToggle("ESPVisibleOnly",      { Text = "Visible Only",     Default = false })
+BoxTab:AddSlider("ESPMaxDistance",      { Text = "Max Distance",     Default = 1000, Min = 50, Max = 5000, Rounding = 0, Suffix = " studs" })
 
-DetailsTab:AddToggle("ESPName",            { Text = "Name",            Default = true })
-DetailsTab:AddToggle("ESPDistance",        { Text = "Distance",        Default = true })
-DetailsTab:AddToggle("ESPHealthBar",       { Text = "Health Bar",      Default = true })
-DetailsTab:AddToggle("ESPHealthNumerical", { Text = "HP Number",       Default = false })
-DetailsTab:AddDivider()
-DetailsTab:AddToggle("ESPTargetCircle",    { Text = "Target Circle",   Default = true, Tooltip = "Renders on locked target only." })
-DetailsTab:AddSlider("ESPTargetCircleRadius", { Text = "Circle Radius", Default = 14, Min = 6, Max = 40, Rounding = 0, Suffix = "px" })
+DetailsTab:AddToggle("ESPName",             { Text = "Name",             Default = true })
+DetailsTab:AddToggle("ESPDistance",         { Text = "Distance",         Default = true })
+DetailsTab:AddToggle("ESPHealthBar",        { Text = "Health Bar",       Default = true })
+DetailsTab:AddToggle("ESPTargetCircle",     { Text = "Target Circle",    Default = true })
+DetailsTab:AddSlider("ESPTargetCircleRadius", { Text = "Circle Radius",  Default = 14, Min = 6, Max = 40, Rounding = 0, Suffix = "px" })
 
-ExtrasTab:AddToggle("ESPTracer",           { Text = "Tracer",          Default = false })
-ExtrasTab:AddDropdown("ESPTracerOrigin",   { Text = "Tracer Origin",   Values = { "Bottom", "Center" }, Default = 1 })
-ExtrasTab:AddToggle("ESPSkeleton",         { Text = "Skeleton",        Default = false })
+ExtrasTab:AddToggle("ESPTracer",            { Text = "Tracer",           Default = false })
 
-VisRight:AddToggle("ChamsEnabled",         { Text = "Enable Chams",    Default = true })
+VisRight:AddToggle("ChamsEnabled",          { Text = "Enable Chams",     Default = true })
 do local CECol = VisRight:AddToggle("_CECol", { Text = "Enemy Color", Default = false })
    CECol:AddColorPicker("ChamsEnemyColor", { Title = "Enemy", Default = Color3.fromRGB(255, 50, 50) }) end
 
-local UtilLeft = Tabs.Utility:AddLeftGroupbox("Movement")
+local UtilLeft  = Tabs.Utility:AddLeftGroupbox("Movement")
+local UtilRight = Tabs.Utility:AddRightGroupbox("Misc")
 
-UtilLeft:AddToggle("SpeedHackEnabled",   { Text = "Speed Hack",      Default = false })
-UtilLeft:AddSlider("SpeedHackValue",     { Text = "Hack Speed",      Default = 50,  Min = 1,   Max = 500, Rounding = 0, Suffix = " WS" })
+UtilLeft:AddToggle("SpeedHackEnabled",   { Text = "Speed Hack",       Default = false })
+UtilLeft:AddSlider("SpeedHackValue",     { Text = "Hack Speed",       Default = 50, Min = 1, Max = 500, Rounding = 0, Suffix = " WS" })
 UtilLeft:AddDivider()
-UtilLeft:AddSlider("WalkSpeed",          { Text = "Walk Speed",      Default = 16,  Min = 0,   Max = 500, Rounding = 0, Suffix = " WS",
+UtilLeft:AddSlider("WalkSpeed",          { Text = "Walk Speed",       Default = 16, Min = 0, Max = 500, Rounding = 0, Suffix = " WS",
     Callback = function(v)
         if not (Toggles.SpeedHackEnabled and Toggles.SpeedHackEnabled.Value) then
             local h = GetHum() if h then h.WalkSpeed = v end
         end
     end })
-UtilLeft:AddSlider("JumpPower",          { Text = "Jump Power",      Default = 50,  Min = 0,   Max = 500, Rounding = 0, Suffix = " JP",
+UtilLeft:AddSlider("JumpPower",          { Text = "Jump Power",       Default = 50, Min = 0, Max = 500, Rounding = 0, Suffix = " JP",
     Callback = function(v) local h = GetHum() if h then h.JumpPower = v end end })
-UtilLeft:AddToggle("InfiniteJump",       { Text = "Infinite Jump",   Default = false })
+UtilLeft:AddToggle("InfiniteJump",       { Text = "Infinite Jump",    Default = false })
 
 Library:GiveSignal(UIS.JumpRequest:Connect(function()
     if not (Toggles.InfiniteJump and Toggles.InfiniteJump.Value) then return end
     local h = GetHum() if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
 end))
 
-local MenuGroup = Tabs.Settings:AddLeftGroupbox("Menu")
+UtilRight:AddToggle("AntiAFK",           { Text = "Anti-AFK",         Default = false })
+UtilRight:AddToggle("FullbrightEnabled", { Text = "Fullbright",       Default = false })
+UtilRight:AddToggle("RemoveFog",         { Text = "Remove Fog",       Default = false })
 
+local DefaultFogEnd = game:GetService("Lighting").FogEnd
+local DefaultAmbient = game:GetService("Lighting").Ambient
+local DefaultOutdoor = game:GetService("Lighting").OutdoorAmbient
+local DefaultBrightness = game:GetService("Lighting").Brightness
+
+Toggles.RemoveFog:OnChanged(function(s)
+    game:GetService("Lighting").FogEnd = s and 1e9 or DefaultFogEnd
+end)
+Toggles.FullbrightEnabled:OnChanged(function(s)
+    local L = game:GetService("Lighting")
+    if s then
+        L.Ambient = Color3.fromRGB(255, 255, 255) L.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+        L.Brightness = 2 L.GlobalShadows = false L.FogEnd = 1e9
+    else
+        L.Ambient = DefaultAmbient L.OutdoorAmbient = DefaultOutdoor
+        L.Brightness = DefaultBrightness L.GlobalShadows = true L.FogEnd = DefaultFogEnd
+    end
+end)
+Toggles.AntiAFK:OnChanged(function(s)
+    if s then task.spawn(function()
+        local vu = game:GetService("VirtualUser")
+        while Toggles.AntiAFK.Value do
+            vu:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+            task.wait(0.1)
+            vu:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+            task.wait(15)
+        end
+    end) end
+end)
+
+local MenuGroup = Tabs.Settings:AddLeftGroupbox("Menu")
 MenuGroup:AddLabel("Menu Keybind"):AddKeyPicker("MenuKeybind", { Default = "RightControl", NoUI = true, Text = "Menu Keybind" })
 Library.ToggleKeybind = Options.MenuKeybind
 MenuGroup:AddDivider()
 MenuGroup:AddButton({ Text = "Unload", Func = function()
     Library:Notify({ Title = "Unloading", Description = "Cleaning up...", Time = 2 })
-    task.wait(0.5)
-    Library:Unload()
+    task.wait(0.5) Library:Unload()
 end })
 
 Toggles.SpeedHackEnabled:OnChanged(function(s)
-    if s then
-        ApplySpeedHack()
+    if s then ApplySpeedHack()
     else
         if SpeedHackConn then SpeedHackConn:Disconnect() SpeedHackConn = nil end
         local hum = GetHum()
         if hum then hum.WalkSpeed = Options.WalkSpeed and Options.WalkSpeed.Value or 16 end
     end
 end)
-
 Toggles.AutoClickEnabled:OnChanged(function(s)
     if s then
         if autoClickConn then autoClickConn:Disconnect() autoClickConn = nil end
         local last = 0
         autoClickConn = RunService.Heartbeat:Connect(function()
-            if not Toggles.AutoClickEnabled.Value then
-                autoClickConn:Disconnect()
-                autoClickConn = nil
-                return
-            end
+            if not Toggles.AutoClickEnabled.Value then autoClickConn:Disconnect() autoClickConn = nil return end
             local now = tick()
             local rate = Options.AutoClickRate and Options.AutoClickRate.Value or 20
             if now - last >= 1 / rate then last = now pcall(mouse1click) end
         end)
-    else
-        if autoClickConn then autoClickConn:Disconnect() autoClickConn = nil end
-    end
+    else if autoClickConn then autoClickConn:Disconnect() autoClickConn = nil end end
 end)
-
-Toggles.HitboxEnabled:OnChanged(function(s)
-    if not s then ResetAllHitboxes() end
-end)
-
+Toggles.HitboxEnabled:OnChanged(function(s) if not s then ResetAllHitboxes() end end)
 RunService.Heartbeat:Connect(function()
     if KillLabel and KillLabel.SetText then KillLabel:SetText("Session Kills: " .. KillCount) end
 end)
 
 Library:OnUnload(function()
-    ResetAllHitboxes()
-    ReleaseAllSlots()
-    CleanupAllChams()
+    ResetAllHitboxes() ReleaseAllSlots() CleanupAllChams()
     if SpeedHackConn then SpeedHackConn:Disconnect() end
     if autoClickConn then autoClickConn:Disconnect() end
     if FOVCircle.__OBJECT_EXISTS then FOVCircle:Remove() end
     if FOVPulse.__OBJECT_EXISTS then FOVPulse:Remove() end
-    if LockLabel.__OBJECT_EXISTS then LockLabel:Remove() end
-    velHistory = {}
-    visCache = {}
-    visCacheTime = {}
+    if LockLabelDraw.__OBJECT_EXISTS then LockLabelDraw:Remove() end
+    velHistory = {} visCache = {} visCacheTime = {}
+    local L = game:GetService("Lighting")
+    L.Ambient = DefaultAmbient L.OutdoorAmbient = DefaultOutdoor
+    L.Brightness = DefaultBrightness L.FogEnd = DefaultFogEnd
 end)
 
 ThemeManager:SetLibrary(Library)
